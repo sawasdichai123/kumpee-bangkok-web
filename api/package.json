@@ -1,18 +1,16 @@
 {
-  "name": "kumpee-bangkok-s3db",
-  "version": "1.0.3",
-  "private": true,
+  "name": "kumpee-bangkok-api",
+  "version": "1.0.0",
+  "description": "Kumpee Bangkok Webboard API (Express + S3 JSON)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "start:dev": "NODE_ENV=development node server.js"
+    "dev": "NODE_ENV=development nodemon server.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.664.0",
+    "@aws-sdk/client-s3": "^3.686.0",
     "cors": "^2.8.5",
-    "express": "^4.21.1"
-  },
-  "engines": {
-    "node": "18.x"
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
   }
 }
