@@ -2,25 +2,40 @@
 <html lang="th">
 <head>
   <meta charset="utf-8" />
-  <title>Kumpee Bangkok • Webboard (S3 JSON)</title>
+  <title>Kumpee Bangkok • Webboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <style>
     :root{ --bg:#f7f8fb; --card:#fff; --border:#e5e7eb; --text:#0f172a; --muted:#6b7280; --ring:#818cf8; --acc1:#6366f1; --acc2:#22c55e; --shadow:0 10px 24px rgba(2,6,23,.12) }
-    @media (prefers-color-scheme: dark){ :root{ --bg:#0b1220; --card:#0f172a; --border:#1f2937; --text:#e5e7ee; --muted:#9aa3b2; --shadow:0 10px 24px rgba(0,0,0,.45) } }
+    @media (prefers-color-scheme: dark){
+      :root{ --bg:#0b1220; --card:#0f172a; --border:#1f2937; --text:#e5e7ee; --muted:#9aa3b2; --shadow:0 10px 24px rgba(0,0,0,.45) }
+    }
     *{box-sizing:border-box}
-    body{ margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial; color:var(--text);
-      background: radial-gradient(900px 500px at -10% -10%, rgba(99,102,241,.16), transparent 60%), radial-gradient(900px 500px at 110% 0%, rgba(34,197,94,.16), transparent 60%), var(--bg) }
+    body{
+      margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial; color:var(--text);
+      background:
+        radial-gradient(900px 500px at -10% -10%, rgba(99,102,241,.16), transparent 60%),
+        radial-gradient(900px 500px at 110% 0%, rgba(34,197,94,.16), transparent 60%),
+        var(--bg)
+    }
+    a{color:inherit}
     .hero{position:sticky; top:0; z-index:10; backdrop-filter: blur(8px); border-bottom:1px solid var(--border); background:linear-gradient(135deg, rgba(99,102,241,.10), rgba(34,197,94,.08)), color-mix(in srgb, #fff 85%, transparent)}
     .hero-inner{max-width:1000px; margin:0 auto; padding:14px 16px; display:flex; align-items:center; gap:12px}
     .logo{display:grid; place-items:center; width:42px; height:42px; border-radius:12px; color:#fff; background:linear-gradient(145deg, var(--acc1), var(--acc2)); box-shadow:var(--shadow)}
     .brand{flex:1}
+    .brand h1{margin:0; font-size:18px}
+    .brand p{margin:0; color:var(--muted); font-size:12px}
     .wrap{max-width:1000px; margin:18px auto; padding:0 16px; display:grid; gap:16px}
     @media (min-width: 900px){ .wrap{grid-template-columns: 2fr 1fr} }
     .card{background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow:var(--shadow)}
+    .card h3{margin:0 0 10px}
+    label{font-size:12px; color:var(--muted); display:block; margin-bottom:6px}
+    input, textarea{width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:transparent; color:inherit; outline:none}
+    input:focus, textarea:focus{border-color:var(--ring); box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 30%, transparent)}
     .row{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
     .btn{appearance:none; border:1px solid var(--border); background:#f8fafc; padding:8px 12px; border-radius:10px; cursor:pointer; font-weight:600}
     .btn-primary{background:linear-gradient(135deg, var(--acc1), var(--acc2)); color:#fff; border:none}
+    .btn-ghost{background:transparent}
     .hint{color:var(--muted); font-size:12px}
     .pill{display:inline-block; padding:.18rem .5rem; border:1px solid var(--border); border-radius:999px; font-size:12px; color:var(--muted)}
     .list{display:grid; gap:12px}
@@ -36,6 +51,10 @@
     .t.err{background:#2a0b0b; color:#fee2e2}
     .skeleton{height:64px; border-radius:12px; background:linear-gradient(90deg, rgba(148,163,184,.16), rgba(148,163,184,.06), rgba(148,163,184,.16)); background-size:200% 100%; animation:shim 1.2s infinite}
     @keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+    /* modal */
+    .modalWrap{position:fixed; inset:0; display:none; place-items:center; background:rgba(15,23,42,.4)}
+    .modal{background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; width:360px; box-shadow:var(--shadow)}
+    .modal h4{margin:0 0 10px}
   </style>
 </head>
 <body>
@@ -44,12 +63,12 @@
       <div class="logo">KB</div>
       <div class="brand">
         <h1>Kumpee Bangkok • Webboard</h1>
-        <p class="hint">โฮสต์ API บน EC2/Cloud9 • เก็บข้อมูลเป็น JSON บน S3 (private)</p>
+        <p>โฮสต์ API บน EC2/Cloud9 • เก็บข้อมูลเป็น JSON บน S3 (private)</p>
       </div>
       <div class="row">
         <button id="openSignup" class="btn">Sign up</button>
-        <button id="openLogin" class="btn">Login</button>
-        <button id="logoutBtn" class="btn" style="display:none">Logout</button>
+        <button id="openLogin"  class="btn">Login</button>
+        <button id="logoutBtn"  class="btn btn-ghost" style="display:none">Logout</button>
         <span id="who" class="hint" aria-live="polite"></span>
       </div>
     </div>
@@ -63,7 +82,7 @@
           <input id="q" placeholder="เช่น: วีซ่าที่เขตบางรัก / ม.กรุงเทพ หอพัก" />
           <button id="doSearch" class="btn btn-primary">Search</button>
         </div>
-        <div class="hint" style="margin-top:6px">จัดอันดับด้วย keyword + TF + fuzzy (prefix/edit≤1) + title boost</div>
+        <div class="hint" style="margin-top:6px">จัดอันดับด้วย keyword + TF + fuzzy (prefix & edit≤1) + title boost</div>
         <div id="results" class="list" style="margin-top:12px"></div>
       </div>
 
@@ -108,28 +127,28 @@
   </main>
 
   <!-- Auth Modals -->
-  <div id="authModals" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(2,6,23,.5); z-index:60">
-    <div id="signupCard" class="card" style="width:360px; display:none">
-      <h3>สร้างบัญชี</h3>
+  <div id="authModals" class="modalWrap">
+    <div id="signupCard" class="modal" style="display:none">
+      <h4>สร้างบัญชี</h4>
       <label class="hint">Username</label>
-      <input id="su_user" placeholder="ตั้งชื่อผู้ใช้ (a-z0-9._-)" />
+      <input id="su_user" placeholder="ชื่อผู้ใช้ (a-z 0-9 . _ -)" />
       <div style="height:8px"></div>
       <label class="hint">Password</label>
       <input id="su_pass" type="password" placeholder="อย่างน้อย 6 ตัวอักษร" />
-      <div class="row" style="margin-top:12px">
+      <div class="row" style="margin-top:10px">
         <button id="doSignup" class="btn btn-primary">Sign up</button>
         <button id="cancelSignup" class="btn">ยกเลิก</button>
       </div>
     </div>
 
-    <div id="loginCard" class="card" style="width:360px; display:none">
-      <h3>เข้าสู่ระบบ</h3>
+    <div id="loginCard" class="modal" style="display:none">
+      <h4>เข้าสู่ระบบ</h4>
       <label class="hint">Username</label>
       <input id="li_user" placeholder="ชื่อผู้ใช้" />
       <div style="height:8px"></div>
       <label class="hint">Password</label>
       <input id="li_pass" type="password" placeholder="รหัสผ่าน" />
-      <div class="row" style="margin-top:12px">
+      <div class="row" style="margin-top:10px">
         <button id="doLogin" class="btn btn-primary">Login</button>
         <button id="cancelLogin" class="btn">ยกเลิก</button>
       </div>
@@ -139,47 +158,68 @@
   <div class="toast" id="toast" aria-live="polite" aria-atomic="true"></div>
 
 <script>
-// ===== Config (API ชี้โดเมน/พอร์ตรันอยู่) =====
 const api = window.location.origin;
 
 // ===== Utilities =====
 function $(id){ return document.getElementById(id); }
-function toast(msg, kind='ok'){ const t=document.createElement('div'); t.className=`t ${kind}`; t.textContent=msg; $('toast').appendChild(t); setTimeout(()=>t.remove(),2800); }
+function toast(msg, kind='ok'){
+  const t=document.createElement('div'); t.className=`t ${kind}`; t.textContent=msg;
+  document.getElementById('toast').appendChild(t); setTimeout(()=>t.remove(),2800);
+}
 function skeleton(parent){ const s=document.createElement('div'); s.className='skeleton'; parent.appendChild(s); return s; }
-function escapeHtml(s){ return String(s).replace(/[&<>\"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
+function escapeHtml(s){ return String(s).replace(/[&<>\"']/g, m=>({"&":"&amp;","<":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
 
-// ===== Local Auth =====
-const USER_RE = /^[a-z0-9._-]{3,20}$/i;
-function getUsers(){ try{ return JSON.parse(localStorage.getItem('kb_users')||'{}'); }catch{return {};} }
-function setUsers(u){ localStorage.setItem('kb_users', JSON.stringify(u)); }
+// ===== Session =====
 function getSession(){ return localStorage.getItem('kb_session') || null; }
 function setSession(u){ if(u) localStorage.setItem('kb_session', u); else localStorage.removeItem('kb_session'); }
-async function sha256Hex(s){ const enc=new TextEncoder().encode(s); const buf=await crypto.subtle.digest('SHA-256', enc); return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
-async function signup(username, password){
-  username=(username||'').trim();
-  if(!USER_RE.test(username)) throw new Error('username ไม่ถูกต้อง');
-  if((password||'').length<6) throw new Error('รหัสผ่านสั้นเกินไป');
-  const users=getUsers(); if(users[username]) throw new Error('มี username นี้แล้ว');
-  users[username]={ hash: await sha256Hex(password), createdAt: new Date().toISOString() };
-  setUsers(users); setSession(username);
-}
-async function login(username,password){
-  const u=getUsers()[username]; if(!u) throw new Error('ไม่พบผู้ใช้');
-  const h=await sha256Hex(password||''); if(h!==u.hash) throw new Error('รหัสผ่านไม่ถูกต้อง');
-  setSession(username);
-}
-function logout(){ setSession(null); }
-function currentUser(){ return getSession(); }
+function authHeader(){ const u=getSession(); return u ? { 'X-User': u } : {}; }
 function renderAuth(){
-  const u=currentUser();
+  const u=getSession();
   $('who').textContent = u ? `Signed in as @${u}` : '';
   $('logoutBtn').style.display = u ? 'inline-block' : 'none';
   $('openSignup').style.display = u ? 'none' : 'inline-block';
   $('openLogin').style.display  = u ? 'none'  : 'inline-block';
 }
-function authHeader(){ const u=currentUser(); return u ? { 'X-User': u } : {}; }
 
-// ===== UI =====
+// ===== Auth (call server) =====
+async function signup(username, password){
+  const r = await fetch(api + '/auth/signup', {
+    method:'POST', headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  if(!r.ok){ let e='signup failed'; try{e=(await r.json()).error||e}catch{}; throw new Error(e); }
+  const j=await r.json(); setSession(j.username);
+}
+async function login(username, password){
+  const r = await fetch(api + '/auth/login', {
+    method:'POST', headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  if(!r.ok){ let e='login failed'; try{e=(await r.json()).error||e}catch{}; throw new Error(e); }
+  const j=await r.json(); setSession(j.username);
+}
+function logout(){ setSession(null); }
+
+// Modals
+$('openSignup').onclick = ()=>{ $('authModals').style.display='grid'; $('signupCard').style.display='block'; $('loginCard').style.display='none'; };
+$('openLogin').onclick  = ()=>{ $('authModals').style.display='grid'; $('signupCard').style.display='none';  $('loginCard').style.display='block'; };
+$('cancelSignup').onclick = ()=>{ $('authModals').style.display='none'; };
+$('cancelLogin').onclick  = ()=>{ $('authModals').style.display='none'; };
+$('doSignup').onclick = async ()=>{
+  try{
+    await signup($('su_user').value.trim(), $('su_pass').value);
+    $('authModals').style.display='none'; renderAuth(); toast('สมัครและเข้าสู่ระบบแล้ว','ok');
+  }catch(e){ toast(e.message||'สมัครไม่สำเร็จ','err'); }
+};
+$('doLogin').onclick  = async ()=>{
+  try{
+    await login($('li_user').value.trim(), $('li_pass').value);
+    $('authModals').style.display='none'; renderAuth(); toast('เข้าสู่ระบบแล้ว','ok');
+  }catch(e){ toast(e.message||'เข้าสู่ระบบไม่สำเร็จ','err'); }
+};
+$('logoutBtn').onclick = ()=>{ logout(); renderAuth(); toast('ออกจากระบบแล้ว','ok'); };
+
+// ===== Threads actions =====
 function threadCard(item){
   const answers = item.answersCount ?? (item.answers?.length || 0);
   const topics = (item.topics||[]).map(x=>`<span class="pill">${escapeHtml(x)}</span>`).join(' ');
@@ -197,12 +237,9 @@ function threadCard(item){
     <div class="meta">${escapeHtml(item.createdAt||'')}</div>
   </div>`;
 }
-
-// ===== Ranking (client-side) =====
 function tokenize(s){ return (s||'').toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu,' ').trim().split(/\s+/).filter(Boolean); }
 function levenshtein1orLess(a,b){
-  if(a===b) return true;
-  const la=a.length, lb=b.length; if(Math.abs(la-lb)>1) return false;
+  if(a===b) return true; const la=a.length, lb=b.length; if(Math.abs(la-lb)>1) return false;
   let i=0,j=0,d=0; while(i<la && j<lb){ if(a[i]===b[j]){i++;j++;} else { if(++d>1) return false; if(la>lb)i++; else if(lb>la)j++; else {i++;j++;}} } return true;
 }
 function scoreItem(qTokens, item){
@@ -219,17 +256,14 @@ function scoreItem(qTokens, item){
 }
 function rankByQuery(items,q){ const qTokens=tokenize(q); if(!qTokens.length) return items; return items.map(x=>({x,s:scoreItem(qTokens,x)})).sort((a,b)=>b.s-a.s).map(o=>o.x); }
 
-// ===== Actions =====
 $('doSearch').onclick = async ()=>{
   const q=$('q').value.trim(); const box=$('results'); box.innerHTML=''; skeleton(box);
   try{
-    const r = await fetch(api + '/questions');
-    const arr = await r.json();
+    const r = await fetch(api + '/questions'); const arr = await r.json();
     const ranked = q ? rankByQuery(arr,q) : arr;
     box.innerHTML = ranked.length ? ranked.map(threadCard).join('') : '<span class="hint">ไม่พบผลลัพธ์</span>';
   }catch(e){ console.error(e); box.innerHTML='<span class="hint">ค้นหาไม่สำเร็จ</span>'; toast('Search error','err'); }
 };
-
 $('latest').onclick = async ()=>{
   const out=$('latestOut'); out.innerHTML=''; skeleton(out);
   try{
@@ -238,37 +272,35 @@ $('latest').onclick = async ()=>{
     out.innerHTML = arr.length ? arr.map(threadCard).join('') : '<span class="hint">ยังไม่มีกระทู้</span>';
   }catch(e){ console.error(e); out.innerHTML='<span class="hint">โหลดไม่สำเร็จ</span>'; toast('Load error','err'); }
 };
-
 $('ask').onclick = async ()=>{
-  if(!currentUser()){ toast('กรุณา Login ก่อน','err'); return; }
+  if(!getSession()){ toast('กรุณา Login ก่อน','err'); return; }
   const title=$('title').value.trim(); const body=$('body').value.trim();
   if(!title){ toast('ต้องกรอกหัวข้อ','err'); return; }
   try{
-    const r = await fetch(api + '/questions', { method:'POST', headers:{'Content-Type':'application/json', ...authHeader()}, body: JSON.stringify({ title, body }) });
-    const data = await r.json(); $('askOut').textContent = `Status: ${data.status||r.status} | Question ID: ${data.questionId||''}`;
+    const r = await fetch(api + '/questions', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', ...authHeader() },
+      body: JSON.stringify({ title, body })
+    });
+    const data = await r.json();
+    $('askOut').textContent = `Status: ${data.status||r.status} | Question ID: ${data.questionId||''}`;
     if(r.ok){ $('title').value=''; $('body').value=''; toast('โพสต์แล้ว ✅','ok'); } else toast('โพสต์ไม่สำเร็จ','err');
   }catch(e){ console.error(e); toast('Network error','err'); }
 };
-
 $('answer').onclick = async ()=>{
-  if(!currentUser()){ toast('กรุณา Login ก่อน','err'); return; }
+  if(!getSession()){ toast('กรุณา Login ก่อน','err'); return; }
   const qid=$('qid').value.trim(); const body=$('ans').value.trim();
   if(!qid || !body){ toast('ต้องกรอก Question ID และคำตอบ','err'); return; }
   try{
-    const r = await fetch(api + `/questions/${encodeURIComponent(qid)}/answers`, { method:'POST', headers:{'Content-Type':'application/json', ...authHeader()}, body: JSON.stringify({ body }) });
+    const r = await fetch(api + `/questions/${encodeURIComponent(qid)}/answers`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', ...authHeader() },
+      body: JSON.stringify({ body })
+    });
     const data = await r.json(); $('ansOut').textContent = 'Answer ID: ' + (data.answerId||'');
     if(r.ok){ $('ans').value=''; toast('ตอบแล้ว 💬','ok'); } else toast('ตอบไม่สำเร็จ','err');
   }catch(e){ console.error(e); toast('Network error','err'); }
 };
-
-// Auth binds
-$('openSignup').onclick = ()=>{ document.getElementById('authModals').style.display='flex'; document.getElementById('signupCard').style.display='block'; document.getElementById('loginCard').style.display='none'; };
-$('openLogin').onclick  = ()=>{ document.getElementById('authModals').style.display='flex'; document.getElementById('signupCard').style.display='none';  document.getElementById('loginCard').style.display='block'; };
-$('cancelSignup').onclick = ()=>{ document.getElementById('authModals').style.display='none'; };
-$('cancelLogin').onclick  = ()=>{ document.getElementById('authModals').style.display='none'; };
-$('doSignup').onclick = async ()=>{ try{ await signup($('su_user').value, $('su_pass').value); document.getElementById('authModals').style.display='none'; renderAuth(); toast('สมัครและเข้าสู่ระบบแล้ว','ok'); }catch(e){ toast(e.message||'สมัครไม่สำเร็จ','err'); } };
-$('doLogin').onclick  = async ()=>{ try{ await login($('li_user').value, $('li_pass').value); document.getElementById('authModals').style.display='none'; renderAuth(); toast('เข้าสู่ระบบแล้ว','ok'); }catch(e){ toast(e.message||'เข้าสู่ระบบไม่สำเร็จ','err'); } };
-$('logoutBtn').onclick = ()=>{ logout(); renderAuth(); toast('ออกจากระบบแล้ว','ok'); };
 
 window.addEventListener('load', renderAuth);
 </script>
