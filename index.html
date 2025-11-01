@@ -5,8 +5,6 @@
   <title>Kumpee Bangkok • Webboard (Single-file)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <!-- Google Identity Services (Google Sign-In) -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     :root{ --bg:#f7f8fb; --card:#fff; --border:#e5e7eb; --text:#0f172a; --muted:#6b7280; --ring:#818cf8; --acc1:#6366f1; --acc2:#22c55e; --shadow:0 10px 24px rgba(2,6,23,.12) }
     @media (prefers-color-scheme: dark){ :root{ --bg:#0b1220; --card:#0f172a; --border:#1f2937; --text:#e5e7ee; --muted:#9aa3b2; --shadow:0 10px 24px rgba(0,0,0,.45) } }
@@ -62,10 +60,10 @@
         <p>ถาม-ตอบเรื่องชีวิตในกรุงเทพฯ ค้นหาแบบจัดอันดับความเกี่ยวข้อง</p>
       </div>
       <div class="row">
-        <!-- Google Sign-In button -->
-        <div id="g_id_signin"></div>
-        <!-- Cognito Hosted UI fallback -->
-        <button id="loginHosted" class="btn">Sign in via Cognito</button>
+        <!-- Local Auth buttons -->
+        <button id="openSignup" class="btn">Sign up</button>
+        <button id="openLogin" class="btn">Login</button>
+        <button id="logoutBtn" class="btn btn-ghost" style="display:none">Logout</button>
         <span id="who" class="hint" aria-live="polite"></span>
       </div>
     </div>
@@ -103,7 +101,7 @@
         <textarea id="body" rows="5" placeholder="เล่ารายละเอียด พื้นที่ เวลา เอกสารที่เกี่ยวข้อง ฯลฯ"></textarea>
         <div class="row" style="margin-top:10px">
           <button id="ask" class="btn btn-primary">โพสต์กระทู้</button>
-          <span class="hint">ต้อง Sign in ก่อน</span>
+          <span class="hint">ต้อง Login ก่อน</span>
         </div>
         <div id="askOut" class="hint" style="margin-top:8px"></div>
       </div>
@@ -123,27 +121,82 @@
     </aside>
   </main>
 
+  <!-- Auth Modals -->
+  <div id="authModals" style="position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(2,6,23,.5); z-index:60">
+    <div id="signupCard" class="card" style="width:360px; display:none">
+      <h3>สร้างบัญชี</h3>
+      <label class="hint">Username</label>
+      <input id="su_user" placeholder="ตั้งชื่อผู้ใช้ (a-z0-9._-)" />
+      <div style="height:8px"></div>
+      <label class="hint">Password</label>
+      <input id="su_pass" type="password" placeholder="อย่างน้อย 6 ตัวอักษร" />
+      <div class="row" style="margin-top:12px">
+        <button id="doSignup" class="btn btn-primary">Sign up</button>
+        <button id="cancelSignup" class="btn btn-ghost">ยกเลิก</button>
+      </div>
+    </div>
+
+    <div id="loginCard" class="card" style="width:360px; display:none">
+      <h3>เข้าสู่ระบบ</h3>
+      <label class="hint">Username</label>
+      <input id="li_user" placeholder="ชื่อผู้ใช้" />
+      <div style="height:8px"></div>
+      <label class="hint">Password</label>
+      <input id="li_pass" type="password" placeholder="รหัสผ่าน" />
+      <div class="row" style="margin-top:12px">
+        <button id="doLogin" class="btn btn-primary">Login</button>
+        <button id="cancelLogin" class="btn btn-ghost">ยกเลิก</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 // ===================== Config =====================
-const region = "us-east-1";
-const userPoolId = "YOUR_USER_POOL_ID";                   // ใช้เมื่อกดปุ่ม Cognito
-const clientId   = "YOUR_CLIENT_ID";
-const domain     = `https://YOUR_COGNITO_DOMAIN.auth.${region}.amazoncognito.com`;
-const api        = "YOUR_API_URL";                        // e.g., https://abc123.execute-api.us-east-1.amazonaws.com
-const redirectUri= window.location.origin + window.location.pathname;
-
-// ถ้าจะใช้ Google โดยตรง ให้ใส่ Client ID จริง (จาก Google Cloud)
-const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
+// ค่านี้จะถูกสคริปต์ติดตั้ง patch ให้อัตโนมัติ
+const api = "YOUR_API_URL";
 
 // ===================== Utilities ==================
-let idToken = null;     // เก็บ JWT จาก Google หรือ Cognito
 function $(id){ return document.getElementById(id); }
 function parseHash(h){ const p=new URLSearchParams(h.replace(/^#/,"")); return Object.fromEntries(p.entries()); }
 function toast(msg, kind='ok'){ const t=document.createElement('div'); t.className=`t ${kind}`; t.textContent=msg; $('toast').appendChild(t); setTimeout(()=>{t.style.opacity='0'; t.style.transform='translateY(6px)'},2300); setTimeout(()=>t.remove(),3000); }
 function skeleton(parent){ const s=document.createElement('div'); s.className='skeleton'; parent.appendChild(s); return s; }
 function escapeHtml(s){ return String(s).replace(/[&<>\"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
+
+// ===================== Local Auth (no IAM/Google) =====================
+const USER_RE = /^[a-z0-9._-]{3,20}$/i;
+function getUsers(){ try{ return JSON.parse(localStorage.getItem('kb_users')||'{}'); }catch{return {};} }
+function setUsers(u){ localStorage.setItem('kb_users', JSON.stringify(u)); }
+function getSession(){ return localStorage.getItem('kb_session') || null; }
+function setSession(u){ if(u) localStorage.setItem('kb_session', u); else localStorage.removeItem('kb_session'); }
+async function sha256Hex(s){ const enc=new TextEncoder().encode(s); const buf=await crypto.subtle.digest('SHA-256', enc); return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+async function signup(username, password){
+  username=(username||'').trim();
+  if(!USER_RE.test(username)) throw new Error('รูปแบบ username ไม่ถูกต้อง (a-z0-9._- ยาว 3-20)');
+  if((password||'').length<6) throw new Error('รหัสผ่านอย่างน้อย 6 ตัวอักษร');
+  const users=getUsers();
+  if(users[username]) throw new Error('มี username นี้แล้ว');
+  users[username]={ hash: await sha256Hex(password), createdAt:new Date().toISOString() };
+  setUsers(users); setSession(username); return username;
+}
+async function login(username,password){
+  const u=getUsers()[username]; if(!u) throw new Error('ไม่พบผู้ใช้');
+  const h=await sha256Hex(password||''); if(h!==u.hash) throw new Error('รหัสผ่านไม่ถูกต้อง');
+  setSession(username); return username;
+}
+function logout(){ setSession(null); }
+function currentUser(){ return getSession(); }
+function showModal(which){ $('authModals').style.display='flex'; $('signupCard').style.display= which==='signup'?'block':'none'; $('loginCard').style.display= which==='login'?'block':'none'; }
+function hideModal(){ $('authModals').style.display='none'; $('signupCard').style.display='none'; $('loginCard').style.display='none'; }
+function renderAuth(){
+  const u=currentUser();
+  $('who').textContent = u ? `Signed in as @${u}` : '';
+  $('logoutBtn').style.display = u ? 'inline-block' : 'none';
+  $('openSignup').style.display = u ? 'none' : 'inline-block';
+  $('openLogin').style.display  = u ? 'none'  : 'inline-block';
+}
+function authHeader(){ const u=currentUser(); return u ? { 'X-User': u } : {}; }
 
 // ===================== Webboard UI ==================
 function threadCard(item){
@@ -167,14 +220,7 @@ function threadCard(item){
 // ===================== Search Ranking ==================
 // Hybrid score = token overlap + TF + fuzzy (prefix / edit<=1) + title boost
 function tokenize(s){
-  return (s||'')
-    .toLowerCase()
-    .normalize('NFKC')
-    // รองรับไทยและตัวอักษรยูนิโค้ดทั่วไป
-    .replace(/[^\p{L}\p{N}]+/gu,' ')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  return (s||'').toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu,' ').trim().split(/\s+/).filter(Boolean);
 }
 function levenshtein1orLess(a,b){
   if(a===b) return true;
@@ -203,7 +249,7 @@ function scoreItem(qTokens, item){
       for(const t of toks){ if(Math.abs(t.length-qt.length)<=1 && levenshtein1orLess(t,qt)){ fuzzy += .4; break; } }
     }
   }
-  const titleBoost = (item.title||'').toLowerCase().includes(qTokens[0]||'') ? 1 : 0;
+  const titleBoost = (item.title||'').toLowerCase().includes((qTokens[0]||'')) ? 1 : 0;
   return hit*2 + Math.min(tf,3)*0.6 + fuzzy + titleBoost;
 }
 function rankByQuery(items, q){
@@ -212,52 +258,13 @@ function rankByQuery(items, q){
   return items.map(x=>({x, s: scoreItem(qTokens,x)})).sort((a,b)=>b.s-a.s).map(o=>o.x);
 }
 
-// ===================== Auth =====================
-// Google (single-file)
-window.handleGoogleCred = (resp)=>{
-  try{
-    idToken = resp.credential; // Google ID Token (JWT)
-    $('who').textContent = 'Signed in with Google ✔️';
-    toast('Signed in with Google','ok');
-  }catch(e){ console.error(e); toast('Google Sign-In failed','err'); }
-};
-
-// Cognito Hosted UI
-$('loginHosted').onclick = ()=>{
-  const url = `${domain}/login?client_id=${clientId}&response_type=token&scope=email+openid&redirect_uri=${encodeURIComponent(redirectUri)}`;
-  location = url;
-};
-// Handle Cognito redirect
-(function initCognito(){
-  if (location.hash.includes('id_token=')){
-    const params = parseHash(location.hash);
-    idToken = params.id_token; // Cognito id_token
-    $('who').textContent = 'Signed in ✔️';
-    history.replaceState({}, document.title, redirectUri);
-    toast('Signed in','ok');
-  }
-})();
-// Render Google button after library load
-window.onload = function(){
-  if(window.google && window.google.accounts && GOOGLE_CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com'){
-    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCred });
-    google.accounts.id.renderButton(document.getElementById('g_id_signin'), { theme: 'outline', size: 'large', type:'standard', shape:'pill' });
-  } else {
-    const b = document.getElementById('g_id_signin'); if(b) b.style.display='none';
-  }
-};
-
-function authHeader(){
-  return idToken ? { 'Authorization': `Bearer ${idToken}` } : {};
-}
-
 // ===================== Actions ==================
 $('doSearch').onclick = async ()=>{
   const q = $('q').value.trim();
   const box = $('results'); box.innerHTML='';
   skeleton(box);
   try{
-    const r = await fetch(api + '/search?q=' + encodeURIComponent(q));
+    const r = await fetch(api + '/search');
     if(!r.ok) throw new Error('Search failed');
     const arr = await r.json();
     const ranked = q ? rankByQuery(arr, q) : arr;
@@ -282,7 +289,7 @@ $('latest').onclick = async ()=>{
 };
 
 $('ask').onclick = async ()=>{
-  if(!idToken){ toast('กรุณา Sign in ก่อน','err'); return; }
+  if(!currentUser()){ toast('กรุณา Login ก่อน','err'); return; }
   const title = $('title').value.trim();
   const body  = $('body').value.trim();
   if(!title){ toast('ต้องกรอกหัวข้อ','err'); return; }
@@ -300,12 +307,12 @@ $('ask').onclick = async ()=>{
 };
 
 $('answer').onclick = async ()=>{
-  if(!idToken){ toast('กรุณา Sign in ก่อน','err'); return; }
+  if(!currentUser()){ toast('กรุณา Login ก่อน','err'); return; }
   const qid = $('qid').value.trim();
   const body= $('ans').value.trim();
   if(!qid || !body){ toast('ต้องกรอก Question ID และคำตอบ','err'); return; }
   try{
-    const r = await fetch(api + `/questions/${qid}/answers`, {
+    const r = await fetch(api + `/questions/${encodeURIComponent(qid)}/answers`, {
       method:'POST',
       headers:{ 'Content-Type':'application/json', ...authHeader() },
       body: JSON.stringify({ body })
@@ -316,6 +323,27 @@ $('answer').onclick = async ()=>{
     else toast('โพสต์คำตอบไม่สำเร็จ','err');
   }catch(e){ console.error(e); toast('Network error','err'); }
 };
+
+// ===== Bind Auth Buttons & Init =====
+$('openSignup').onclick = ()=> showModal('signup');
+$('cancelSignup').onclick = hideModal;
+$('openLogin').onclick  = ()=> showModal('login');
+$('cancelLogin').onclick = hideModal;
+$('doSignup').onclick = async ()=>{
+  try{
+    const u=$('su_user').value, p=$('su_pass').value;
+    await signup(u,p); hideModal(); renderAuth(); toast('สมัครและเข้าสู่ระบบแล้ว','ok');
+  }catch(e){ console.error(e); toast(e.message||'สมัครไม่สำเร็จ','err'); }
+};
+$('doLogin').onclick = async ()=>{
+  try{
+    const u=$('li_user').value, p=$('li_pass').value;
+    await login(u,p); hideModal(); renderAuth(); toast('เข้าสู่ระบบแล้ว','ok');
+  }catch(e){ console.error(e); toast(e.message||'เข้าสู่ระบบไม่สำเร็จ','err'); }
+};
+$('logoutBtn').onclick = ()=>{ logout(); renderAuth(); toast('ออกจากระบบแล้ว','ok'); };
+
+window.addEventListener('load', renderAuth);
 </script>
 </body>
 </html>
