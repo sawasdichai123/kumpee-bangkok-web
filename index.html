@@ -158,7 +158,17 @@
   <div class="toast" id="toast" aria-live="polite" aria-atomic="true"></div>
 
 <script>
-const api = window.location.origin;
+/* =======================
+   Kumpee Bangkok Webboard — Frontend
+   ปรับให้ทำงานกับ API:
+   - POST /auth/signup  -> { ok:true, user:{ username } }
+   - POST /auth/login   -> { ok:true, user:{ username } }
+   - GET  /questions    -> { ok:true, questions:[...] }
+   - POST /questions    -> { ok:true, question:{...} }
+   - POST /questions/:id/answers -> { ok:true, answer:{...} }
+   ======================= */
+
+const api = window.location.origin; // same-origin
 
 // ===== Utilities =====
 function $(id){ return document.getElementById(id); }
@@ -183,43 +193,37 @@ function renderAuth(){
 
 // ===== Auth (call server) =====
 async function signup(username, password){
+  if(!username || !password) throw new Error('username/password ต้องไม่ว่าง');
   const r = await fetch(api + '/auth/signup', {
     method:'POST', headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({ username, password })
   });
-  if(!r.ok){ let e='signup failed'; try{e=(await r.json()).error||e}catch{}; throw new Error(e); }
-  const j=await r.json(); setSession(j.username);
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok || !j?.ok) throw new Error(j?.error || 'signup failed');
+  setSession(j.user?.username || username);
 }
 async function login(username, password){
+  if(!username || !password) throw new Error('username/password ต้องไม่ว่าง');
   const r = await fetch(api + '/auth/login', {
     method:'POST', headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({ username, password })
   });
-  if(!r.ok){ let e='login failed'; try{e=(await r.json()).error||e}catch{}; throw new Error(e); }
-  const j=await r.json(); setSession(j.username);
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok || !j?.ok) throw new Error(j?.error || 'login failed');
+  setSession(j.user?.username || username);
 }
 function logout(){ setSession(null); }
 
-// Modals
-$('openSignup').onclick = ()=>{ $('authModals').style.display='grid'; $('signupCard').style.display='block'; $('loginCard').style.display='none'; };
-$('openLogin').onclick  = ()=>{ $('authModals').style.display='grid'; $('signupCard').style.display='none';  $('loginCard').style.display='block'; };
-$('cancelSignup').onclick = ()=>{ $('authModals').style.display='none'; };
-$('cancelLogin').onclick  = ()=>{ $('authModals').style.display='none'; };
-$('doSignup').onclick = async ()=>{
-  try{
-    await signup($('su_user').value.trim(), $('su_pass').value);
-    $('authModals').style.display='none'; renderAuth(); toast('สมัครและเข้าสู่ระบบแล้ว','ok');
-  }catch(e){ toast(e.message||'สมัครไม่สำเร็จ','err'); }
-};
-$('doLogin').onclick  = async ()=>{
-  try{
-    await login($('li_user').value.trim(), $('li_pass').value);
-    $('authModals').style.display='none'; renderAuth(); toast('เข้าสู่ระบบแล้ว','ok');
-  }catch(e){ toast(e.message||'เข้าสู่ระบบไม่สำเร็จ','err'); }
-};
-$('logoutBtn').onclick = ()=>{ logout(); renderAuth(); toast('ออกจากระบบแล้ว','ok'); };
+// ===== Questions helpers =====
+async function fetchQuestions(){
+  const r = await fetch(api + '/questions');
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok || !j?.ok) throw new Error(j?.error || 'load questions failed');
+  const arr = Array.isArray(j.questions) ? j.questions : [];
+  // เรียงล่าสุดบน
+  return arr.slice().sort((a,b)=> String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+}
 
-// ===== Threads actions =====
 function threadCard(item){
   const answers = item.answersCount ?? (item.answers?.length || 0);
   const topics = (item.topics||[]).map(x=>`<span class="pill">${escapeHtml(x)}</span>`).join(' ');
@@ -237,6 +241,7 @@ function threadCard(item){
     <div class="meta">${escapeHtml(item.createdAt||'')}</div>
   </div>`;
 }
+
 function tokenize(s){ return (s||'').toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu,' ').trim().split(/\s+/).filter(Boolean); }
 function levenshtein1orLess(a,b){
   if(a===b) return true; const la=a.length, lb=b.length; if(Math.abs(la-lb)>1) return false;
@@ -254,24 +259,53 @@ function scoreItem(qTokens, item){
   const titleBoost=(item.title||'').toLowerCase().includes(qTokens[0]||'') ? 1 : 0;
   return hit*2 + Math.min(tf,3)*.6 + fz + titleBoost;
 }
-function rankByQuery(items,q){ const qTokens=tokenize(q); if(!qTokens.length) return items; return items.map(x=>({x,s:scoreItem(qTokens,x)})).sort((a,b)=>b.s-a.s).map(o=>o.x); }
+function rankByQuery(items,q){ const qTokens=tokenize(q); if(!qTokens.length) return items.slice(); return items.map(x=>({x,s:scoreItem(qTokens,x)})).sort((a,b)=>b.s-a.s).map(o=>o.x); }
 
+// ===== UI wiring: Modals =====
+$('openSignup').onclick = ()=>{ $('authModals').style.display='grid'; $('signupCard').style.display='block'; $('loginCard').style.display='none'; };
+$('openLogin').onclick  = ()=>{ $('authModals').style.display='grid'; $('signupCard').style.display='none';  $('loginCard').style.display='block'; };
+$('cancelSignup').onclick = ()=>{ $('authModals').style.display='none'; };
+$('cancelLogin').onclick  = ()=>{ $('authModals').style.display='none'; };
+
+// ===== Auth buttons =====
+$('doSignup').onclick = async ()=>{
+  try{
+    await signup($('su_user').value.trim(), $('su_pass').value);
+    $('authModals').style.display='none'; renderAuth(); toast('สมัครและเข้าสู่ระบบแล้ว','ok');
+  }catch(e){ toast(e.message||'สมัครไม่สำเร็จ','err'); }
+};
+$('doLogin').onclick  = async ()=>{
+  try{
+    await login($('li_user').value.trim(), $('li_pass').value);
+    $('authModals').style.display='none'; renderAuth(); toast('เข้าสู่ระบบแล้ว','ok');
+  }catch(e){ toast(e.message||'เข้าสู่ระบบไม่สำเร็จ','err'); }
+};
+$('logoutBtn').onclick = ()=>{ logout(); renderAuth(); toast('ออกจากระบบแล้ว','ok'); };
+
+// ===== Search / Latest =====
 $('doSearch').onclick = async ()=>{
-  const q=$('q').value.trim(); const box=$('results'); box.innerHTML=''; skeleton(box);
+  const q=$('q').value.trim(); const box=$('results'); box.innerHTML=''; const sk=skeleton(box);
   try{
-    const r = await fetch(api + '/questions'); const arr = await r.json();
-    const ranked = q ? rankByQuery(arr,q) : arr;
+    const list = await fetchQuestions();
+    const ranked = q ? rankByQuery(list, q) : list;
     box.innerHTML = ranked.length ? ranked.map(threadCard).join('') : '<span class="hint">ไม่พบผลลัพธ์</span>';
-  }catch(e){ console.error(e); box.innerHTML='<span class="hint">ค้นหาไม่สำเร็จ</span>'; toast('Search error','err'); }
+  }catch(e){
+    console.error(e); box.innerHTML='<span class="hint">ค้นหาไม่สำเร็จ</span>'; toast('Search error','err');
+  } finally { sk?.remove?.(); }
 };
+
 $('latest').onclick = async ()=>{
-  const out=$('latestOut'); out.innerHTML=''; skeleton(out);
+  const out=$('latestOut'); out.innerHTML=''; const sk=skeleton(out);
   try{
-    const r = await fetch(api + '/questions'); const arr = await r.json();
-    $('latestCount').textContent = arr.length ? `${arr.length} กระทู้` : '';
-    out.innerHTML = arr.length ? arr.map(threadCard).join('') : '<span class="hint">ยังไม่มีกระทู้</span>';
-  }catch(e){ console.error(e); out.innerHTML='<span class="hint">โหลดไม่สำเร็จ</span>'; toast('Load error','err'); }
+    const list = await fetchQuestions();
+    $('latestCount').textContent = list.length ? `${list.length} กระทู้` : '';
+    out.innerHTML = list.length ? list.map(threadCard).join('') : '<span class="hint">ยังไม่มีกระทู้</span>';
+  }catch(e){
+    console.error(e); out.innerHTML='<span class="hint">โหลดไม่สำเร็จ</span>'; toast('Load error','err');
+  } finally { sk?.remove?.(); }
 };
+
+// ===== Ask / Answer =====
 $('ask').onclick = async ()=>{
   if(!getSession()){ toast('กรุณา Login ก่อน','err'); return; }
   const title=$('title').value.trim(); const body=$('body').value.trim();
@@ -282,11 +316,15 @@ $('ask').onclick = async ()=>{
       headers:{ 'Content-Type':'application/json', ...authHeader() },
       body: JSON.stringify({ title, body })
     });
-    const data = await r.json();
-    $('askOut').textContent = `Status: ${data.status||r.status} | Question ID: ${data.questionId||''}`;
-    if(r.ok){ $('title').value=''; $('body').value=''; toast('โพสต์แล้ว ✅','ok'); } else toast('โพสต์ไม่สำเร็จ','err');
+    const data = await r.json().catch(()=>({}));
+    if(!r.ok || !data?.ok){ toast(data?.error || 'โพสต์ไม่สำเร็จ','err'); return; }
+    const qid = data.question?.questionId || '(unknown)';
+    $('askOut').textContent = `Question ID: ${qid}`;
+    $('title').value=''; $('body').value='';
+    toast('โพสต์แล้ว ✅','ok');
   }catch(e){ console.error(e); toast('Network error','err'); }
 };
+
 $('answer').onclick = async ()=>{
   if(!getSession()){ toast('กรุณา Login ก่อน','err'); return; }
   const qid=$('qid').value.trim(); const body=$('ans').value.trim();
@@ -297,8 +335,12 @@ $('answer').onclick = async ()=>{
       headers:{ 'Content-Type':'application/json', ...authHeader() },
       body: JSON.stringify({ body })
     });
-    const data = await r.json(); $('ansOut').textContent = 'Answer ID: ' + (data.answerId||'');
-    if(r.ok){ $('ans').value=''; toast('ตอบแล้ว 💬','ok'); } else toast('ตอบไม่สำเร็จ','err');
+    const data = await r.json().catch(()=>({}));
+    if(!r.ok || !data?.ok){ toast(data?.error || 'ตอบไม่สำเร็จ','err'); return; }
+    const aid = data.answer?.answerId || '(unknown)';
+    $('ansOut').textContent = 'Answer ID: ' + aid;
+    $('ans').value='';
+    toast('ตอบแล้ว 💬','ok');
   }catch(e){ console.error(e); toast('Network error','err'); }
 };
 
