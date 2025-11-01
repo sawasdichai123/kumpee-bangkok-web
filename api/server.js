@@ -1,194 +1,273 @@
-// ✅ FULL UPDATED server.js — Webboard API + Static Web + S3 JSON DB
+// Kumpee Bangkok — Webboard API (Express + S3 JSON)
+// แก้ hashing ให้ Signup/Login ทำงานจริง (sha256 ฝั่ง server)
+// ใช้ S3 เป็น JSON DB: users.json, questions.json, answers.json (bucket private)
 
-import express from 'express';
-import path from 'path';
-import crypto from 'crypto';
-import { fileURLToPath } from 'url';
-import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import bodyParser from 'body-parser';
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const express = require('express');
+const cors = require('cors');
+const dotenv = require('dotenv');
 
-// ---------------- ENV / PATH SETUP ----------------
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Default port 8080 ✅
-const port = process.env.PORT || 8080;
-
-// STATIC ROOT = ../ (parent folder of /api)
-const webRoot = process.env.WEB_ROOT || path.resolve(__dirname, '..');
-console.log('[WEB] Serving static from:', webRoot);
-
-// S3 bucket name from .env
+// ---------- ENV ----------
+dotenv.config();
+const PORT = process.env.PORT ? Number(process.env.PORT) : 8080;
+const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 const BUCKET = process.env.BUCKET;
 if (!BUCKET) {
-  console.error("❌ ERROR: BUCKET ENV NOT SET");
+  console.error('[FATAL] .env ไม่พบ BUCKET — โปรดตั้งค่า BUCKET=<ชื่อบัคเก็ต S3>');
   process.exit(1);
 }
-console.log("[S3] Bucket =", BUCKET);
 
-// ---------------- S3 CLIENT ----------------
-const s3 = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
+// ---------- AWS S3 (SDK v3) ----------
+const { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const s3 = new S3Client({ region: AWS_REGION });
 
-async function readJson(key) {
-  try {
-    const r = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
-    const body = await r.Body.transformToString();
-    return JSON.parse(body);
-  } catch (e) {
-    if (e.name === 'NoSuchKey') return null;
-    console.error("❌ S3 read error", key, e);
-    throw e;
-  }
-}
-
-async function writeJson(key, data) {
-  try {
-    await s3.send(new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      Body: JSON.stringify(data, null, 2),
-      ContentType: "application/json"
-    }));
-  } catch (e) {
-    console.error("❌ S3 write error", key, e);
-    throw e;
-  }
-}
-
-// ---------------- AUTH HELPERS ----------------
-function hashPassword(pass) {
-  return crypto.createHash('sha256').update(pass).digest('hex');
-}
-
-async function loadUsers() {
-  return (await readJson("users.json")) || { users: [] };
-}
-async function saveUsers(data) {
-  return writeJson("users.json", data);
-}
-
-// ---------------- EXPRESS APP ----------------
+// ---------- Express ----------
 const app = express();
-app.use(bodyParser.json());
+app.use(cors());
+app.use(express.json({ limit: '1mb' }));
 
-// ✅ Serve frontend static
+// โฟลเดอร์เว็บ (เสิร์ฟ index.html + asset)
+// โครงสร้าง: /repo-root (index.html) + /api (server.js)
+const webRoot = path.resolve(__dirname, '..');
+app.use((req, _res, next) => {
+  console.log(`[REQ] ${req.method} ${req.url}`);
+  next();
+});
 app.use(express.static(webRoot));
-app.get(['/', '/index.html'], (req, res) => {
-  res.sendFile(path.join(webRoot, 'index.html'));
-});
 
-// ✅ API ROOT CHECK
-app.get('/api/health', (req, res) => res.json({ ok: true }));
-
-// ---------------- SIGN-UP ----------------
-app.post('/signup', async (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !password) {
-    return res.status(400).json({ error: "username/password required" });
+// ---------- Utilities ----------
+function sha256Hex(plain) {
+  return crypto.createHash('sha256').update(String(plain), 'utf8').digest('hex');
+}
+function nowIso() {
+  return new Date().toISOString();
+}
+function newId(prefix) {
+  const rnd = crypto.randomBytes(6).toString('hex'); // 12 hex chars
+  return `${prefix}${Date.now().toString(36)}${rnd}`;
+}
+async function s3KeyExists(Key) {
+  try {
+    await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key }));
+    return true;
+  } catch {
+    return false;
   }
-  const users = await loadUsers();
-  if (users.users.find(u => u.username === username)) {
-    return res.status(400).json({ error: "user exists" });
+}
+async function s3ReadJson(Key, fallback) {
+  try {
+    const res = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key }));
+    const buf = await streamToBuffer(res.Body);
+    const text = buf.toString('utf8').trim() || JSON.stringify(fallback);
+    const data = JSON.parse(text);
+    return data;
+  } catch (err) {
+    if (String(err?.$metadata?.httpStatusCode) === '404') {
+      return fallback;
+    }
+    console.error(`[S3 READ ERR] ${Key}`, err);
+    return fallback;
   }
-
-  users.users.push({
-    username,
-    passwordHash: hashPassword(password), // store hashed
-    createdAt: new Date().toISOString()
-  });
-  await saveUsers(users);
-  console.log("✅ SIGN-UP:", username);
-
-  res.json({ ok: true });
-});
-
-// ---------------- LOGIN ----------------
-app.post('/login', async (req, res) => {
-  const { username, password } = req.body || {};
-  const users = await loadUsers();
-  const u = users.users.find(x => x.username === username);
-  if (!u) return res.status(401).json({ error: "not found" });
-
-  if (u.passwordHash !== hashPassword(password)) {
-    return res.status(401).json({ error: "bad password" });
-  }
-  res.json({ ok: true });
-});
-
-// ---------------- QUESTIONS GET ----------------
-app.get('/questions', async (req, res) => {
-  const q = (await readJson("questions.json")) || { questions: [] };
-  const a = (await readJson("answers.json")) || { answers: [] };
-
-  const out = q.questions.map(item => ({
-    ...item,
-    answersCount: a.answers.filter(x => x.qid === item.questionId).length
+}
+async function s3WriteJson(Key, jsonObj) {
+  const Body = Buffer.from(JSON.stringify(jsonObj, null, 2), 'utf8');
+  await s3.send(new PutObjectCommand({
+    Bucket: BUCKET,
+    Key,
+    Body,
+    ContentType: 'application/json; charset=utf-8',
+    ACL: 'private'
   }));
-  res.json(out);
-});
-
-// ---------------- SEARCH GET ----------------
-app.get('/search', async (req, res) => {
-  const q = (await readJson("questions.json")) || { questions: [] };
-  res.json(q.questions);
-});
-
-// ---------------- POST QUESTION ----------------
-app.post('/questions', async (req, res) => {
-  const username = req.header('X-User');
-  if (!username) return res.status(401).json({ error: "not logged in" });
-
-  const { title, body } = req.body || {};
-  if (!title) return res.status(400).json({ error: "title required" });
-
-  const db = (await readJson("questions.json")) || { questions: [] };
-  const id = "q" + Date.now();
-
-  db.questions.push({
-    questionId: id,
-    title,
-    body,
-    createdBy: username,
-    createdAt: new Date().toISOString()
+}
+function streamToBuffer(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on('data', (d) => chunks.push(d));
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+    stream.on('error', reject);
   });
-  await writeJson("questions.json", db);
+}
 
-  console.log("📝 New Question:", id);
-  res.json({ ok: true, questionId: id });
+// ---------- DB Keys ----------
+const USERS_KEY = 'users.json';
+const QUESTIONS_KEY = 'questions.json';
+const ANSWERS_KEY = 'answers.json';
+
+// ---------- Bootstrapping: ensure empty arrays exist ----------
+(async () => {
+  const ensure = async (key, tmpl) => {
+    const exists = await s3KeyExists(key);
+    if (!exists) {
+      console.log(`[S3 INIT] สร้างไฟล์ใหม่: ${key}`);
+      await s3WriteJson(key, tmpl);
+    }
+  };
+  await ensure(USERS_KEY, { users: [] });
+  await ensure(QUESTIONS_KEY, { questions: [] });
+  await ensure(ANSWERS_KEY, { answers: [] });
+})().catch(e => {
+  console.error('[BOOTSTRAP ERROR]', e);
 });
 
-// ---------------- POST ANSWER ----------------
-app.post('/questions/:qid/answers', async (req, res) => {
-  const username = req.header('X-User');
-  if (!username) return res.status(401).json({ error: "not logged in" });
-
-  const { qid } = req.params;
-  const { body } = req.body || {};
-  if (!body) return res.status(400).json({ error: "body required" });
-
-  const db = (await readJson("answers.json")) || { answers: [] };
-  const id = "a" + Date.now();
-
-  db.answers.push({
-    answerId: id,
-    qid,
-    body,
-    createdBy: username,
-    createdAt: new Date().toISOString()
-  });
-  await writeJson("answers.json", db);
-
-  console.log("💬 New Answer:", id);
-  res.json({ ok: true, answerId: id });
+// ---------- Auth ----------
+app.post('/auth/signup', async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, error: 'username/password ต้องไม่ว่าง' });
+    }
+    const db = await s3ReadJson(USERS_KEY, { users: [] });
+    const exists = db.users.find(u => u.username === username);
+    if (exists) {
+      return res.status(409).json({ ok: false, error: 'username นี้ถูกใช้งานแล้ว' });
+    }
+    const passwordHash = sha256Hex(password); // hash ฝั่ง server
+    const user = { username, passwordHash, createdAt: nowIso() };
+    db.users.push(user);
+    await s3WriteJson(USERS_KEY, db);
+    console.log(`[AUTH] signup: ${username}`);
+    return res.json({ ok: true, user: { username } });
+  } catch (err) {
+    console.error('[AUTH SIGNUP ERR]', err);
+    return res.status(500).json({ ok: false, error: 'signup failed' });
+  }
 });
 
-// ---------------- FALLBACK ----------------
-app.get('*', (req, res) => {
-  res.sendFile(path.join(webRoot, 'index.html'));
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, error: 'username/password ต้องไม่ว่าง' });
+    }
+    const db = await s3ReadJson(USERS_KEY, { users: [] });
+    const user = db.users.find(u => u.username === username);
+    if (!user) {
+      return res.status(401).json({ ok: false, error: 'ไม่พบผู้ใช้' });
+    }
+    const hash = sha256Hex(password);
+    if (hash !== user.passwordHash) {
+      return res.status(401).json({ ok: false, error: 'รหัสผ่านไม่ถูกต้อง' });
+    }
+    console.log(`[AUTH] login: ${username}`);
+    return res.json({ ok: true, user: { username } });
+  } catch (err) {
+    console.error('[AUTH LOGIN ERR]', err);
+    return res.status(500).json({ ok: false, error: 'login failed' });
+  }
 });
 
-// ---------------- START SERVER ----------------
-app.listen(port, '0.0.0.0', () => {
-  console.log(`✅ API + Web running: http://0.0.0.0:${port}`);
-  console.log(`Serving frontend from: ${webRoot}`);
+// ---------- Questions ----------
+app.get('/questions', async (_req, res) => {
+  try {
+    const qdb = await s3ReadJson(QUESTIONS_KEY, { questions: [] });
+    const adb = await s3ReadJson(ANSWERS_KEY, { answers: [] });
+    const counts = new Map();
+    for (const a of adb.answers) {
+      counts.set(a.qid, (counts.get(a.qid) || 0) + 1);
+    }
+    const questions = qdb.questions
+      .slice()
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+      .map(q => ({ ...q, answersCount: counts.get(q.questionId) || 0 }));
+    return res.json({ ok: true, questions });
+  } catch (err) {
+    console.error('[GET /questions ERR]', err);
+    return res.status(500).json({ ok: false, error: 'failed' });
+  }
+});
+
+// ส่งรายการคำถามทั้งหมด (ให้ client จัดอันดับเอง)
+app.get('/search', async (_req, res) => {
+  try {
+    const qdb = await s3ReadJson(QUESTIONS_KEY, { questions: [] });
+    return res.json({ ok: true, questions: qdb.questions });
+  } catch (err) {
+    console.error('[GET /search ERR]', err);
+    return res.status(500).json({ ok: false, error: 'failed' });
+  }
+});
+
+// ต้องมี header X-User: <username>
+function requireUser(req, res, next) {
+  const uname = req.get('X-User');
+  if (!uname) return res.status(401).json({ ok: false, error: 'ต้องส่ง header X-User' });
+  req.username = uname;
+  next();
+}
+
+app.post('/questions', requireUser, async (req, res) => {
+  try {
+    const { title, body } = req.body || {};
+    if (!title || !body) {
+      return res.status(400).json({ ok: false, error: 'title/body ต้องไม่ว่าง' });
+    }
+    const qdb = await s3ReadJson(QUESTIONS_KEY, { questions: [] });
+    const q = {
+      questionId: newId('q'),
+      title: String(title).trim(),
+      body: String(body).trim(),
+      createdBy: req.username,
+      createdAt: nowIso()
+    };
+    qdb.questions.push(q);
+    await s3WriteJson(QUESTIONS_KEY, qdb);
+    console.log(`[Q] add: ${q.questionId} by ${req.username}`);
+    return res.json({ ok: true, question: q });
+  } catch (err) {
+    console.error('[POST /questions ERR]', err);
+    return res.status(500).json({ ok: false, error: 'failed' });
+  }
+});
+
+app.post('/questions/:qid/answers', requireUser, async (req, res) => {
+  try {
+    const { qid } = req.params;
+    const { body } = req.body || {};
+    if (!body) {
+      return res.status(400).json({ ok: false, error: 'body ต้องไม่ว่าง' });
+    }
+    // ตรวจว่ามีคำถามนี้จริงไหม
+    const qdb = await s3ReadJson(QUESTIONS_KEY, { questions: [] });
+    const exists = qdb.questions.find(q => q.questionId === qid);
+    if (!exists) {
+      return res.status(404).json({ ok: false, error: 'ไม่พบคำถามนี้' });
+    }
+    const adb = await s3ReadJson(ANSWERS_KEY, { answers: [] });
+    const ans = {
+      answerId: newId('a'),
+      qid,
+      body: String(body).trim(),
+      createdBy: req.username,
+      createdAt: nowIso()
+    };
+    adb.answers.push(ans);
+    await s3WriteJson(ANSWERS_KEY, adb);
+    console.log(`[A] add: ${ans.answerId} -> ${qid} by ${req.username}`);
+    return res.json({ ok: true, answer: ans });
+  } catch (err) {
+    console.error('[POST /questions/:qid/answers ERR]', err);
+    return res.status(500).json({ ok: false, error: 'failed' });
+  }
+});
+
+// ---------- Fallback: เสิร์ฟ index.html ----------
+app.get('*', (req, res, next) => {
+  // ถ้าเป็น API path ไม่ต้องเสิร์ฟ index
+  if (req.path.startsWith('/auth') || req.path.startsWith('/questions') || req.path.startsWith('/search')) {
+    return next();
+  }
+  const indexPath = path.join(webRoot, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    return res.sendFile(indexPath);
+  }
+  return res.status(404).send('index.html not found');
+});
+
+// ---------- Start ----------
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[OK] API + Web running: http://0.0.0.0:${PORT}`);
+  console.log(`[WEB] Serving static from: ${webRoot}`);
+  console.log(`[S3] bucket=${BUCKET} region=${AWS_REGION}`);
 });
