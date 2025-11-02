@@ -34,6 +34,7 @@
     input:focus, textarea:focus{border-color:var(--ring); box-shadow:0 0 0 3px color-mix(in srgb, var(--ring) 30%, transparent)}
     .row{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
     .btn{appearance:none; border:1px solid var(--border); background:#f8fafc; padding:8px 12px; border-radius:10px; cursor:pointer; font-weight:600}
+    .btn:disabled{opacity:.5; cursor:not-allowed}
     .btn-primary{background:linear-gradient(135deg, var(--acc1), var(--acc2)); color:#fff; border:none}
     .btn-ghost{background:transparent}
     .hint{color:var(--muted); font-size:12px}
@@ -51,9 +52,9 @@
     .t.err{background:#2a0b0b; color:#fee2e2}
     .skeleton{height:64px; border-radius:12px; background:linear-gradient(90deg, rgba(148,163,184,.16), rgba(148,163,184,.06), rgba(148,163,184,.16)); background-size:200% 100%; animation:shim 1.2s infinite}
     @keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
-    /* modal */
-    .modalWrap{position:fixed; inset:0; display:none; place-items:center; background:rgba(15,23,42,.4)}
-    .modal{background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; width:360px; box-shadow:var(--shadow)}
+    .modalWrap{position:fixed; inset:0; display:none; place-items:center; background:rgba(15,23,42,.4); z-index:100}
+    .modalWrap.show{display:grid}
+    .modal{background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; width:90%; max-width:360px; box-shadow:var(--shadow)}
     .modal h4{margin:0 0 10px}
   </style>
 </head>
@@ -126,7 +127,6 @@
     </aside>
   </main>
 
-  <!-- Auth Modals -->
   <div id="authModals" class="modalWrap">
     <div id="signupCard" class="modal" style="display:none">
       <h4>สร้างบัญชี</h4>
@@ -139,6 +139,7 @@
         <button id="doSignup" class="btn btn-primary">Sign up</button>
         <button id="cancelSignup" class="btn">ยกเลิก</button>
       </div>
+      <div id="signupError" class="hint" style="margin-top:8px; color:#ef4444"></div>
     </div>
 
     <div id="loginCard" class="modal" style="display:none">
@@ -152,6 +153,7 @@
         <button id="doLogin" class="btn btn-primary">Login</button>
         <button id="cancelLogin" class="btn">ยกเลิก</button>
       </div>
+      <div id="loginError" class="hint" style="margin-top:8px; color:#ef4444"></div>
     </div>
   </div>
 
@@ -159,13 +161,8 @@
 
 <script>
 /* =======================
-   Kumpee Bangkok Webboard — Frontend
-   ปรับให้ทำงานกับ API:
-   - POST /auth/signup  -> { ok:true, user:{ username } }
-   - POST /auth/login   -> { ok:true, user:{ username } }
-   - GET  /questions    -> { ok:true, questions:[...] }
-   - POST /questions    -> { ok:true, question:{...} }
-   - POST /questions/:id/answers -> { ok:true, answer:{...} }
+   Kumpee Bangkok Webboard — Frontend (Fixed)
+   Connects to your AWS API endpoints
    ======================= */
 
 const api = window.location.origin; // same-origin
@@ -177,58 +174,99 @@ function toast(msg, kind='ok'){
   document.getElementById('toast').appendChild(t); setTimeout(()=>t.remove(),2800);
 }
 function skeleton(parent){ const s=document.createElement('div'); s.className='skeleton'; parent.appendChild(s); return s; }
-function escapeHtml(s){ return String(s).replace(/[&<>\"']/g, m=>({"&":"&amp;","<":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
 
 // ===== Session =====
-function getSession(){ return localStorage.getItem('kb_session') || null; }
-function setSession(u){ if(u) localStorage.setItem('kb_session', u); else localStorage.removeItem('kb_session'); }
-function authHeader(){ const u=getSession(); return u ? { 'X-User': u } : {}; }
+function getSession(){ 
+  const data = localStorage.getItem('kb_session');
+  if(!data) return null;
+  // Handle both string and JSON formats
+  try {
+    const parsed = JSON.parse(data);
+    return typeof parsed === 'string' ? parsed : (parsed?.username || null);
+  } catch(e) {
+    // If it's not JSON, it's a plain string username
+    return data;
+  }
+}
+
+function setSession(u){ 
+  if(u) {
+    // Always store as plain string username
+    const username = typeof u === 'string' ? u : u?.username;
+    if(username) localStorage.setItem('kb_session', username);
+  } else {
+    localStorage.removeItem('kb_session');
+  }
+}
+
+function authHeader(){ 
+  const username = getSession();
+  return username ? { 'X-User': username } : {}; 
+}
+
 function renderAuth(){
-  const u=getSession();
-  $('who').textContent = u ? `Signed in as @${u}` : '';
-  $('logoutBtn').style.display = u ? 'inline-block' : 'none';
-  $('openSignup').style.display = u ? 'none' : 'inline-block';
-  $('openLogin').style.display  = u ? 'none'  : 'inline-block';
+  const username = getSession();
+  $('who').textContent = username ? `Signed in as @${username}` : '';
+  $('logoutBtn').style.display = username ? 'inline-block' : 'none';
+  $('openSignup').style.display = username ? 'none' : 'inline-block';
+  $('openLogin').style.display  = username ? 'none' : 'inline-block';
 }
 
 // ===== Auth (call server) =====
 async function signup(username, password){
   if(!username || !password) throw new Error('username/password ต้องไม่ว่าง');
-  const r = await fetch(api + '/auth/signup', {
-    method:'POST', headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({ username, password })
-  });
-  const j = await r.json().catch(()=>({}));
-  if(!r.ok || !j?.ok) throw new Error(j?.error || 'signup failed');
-  setSession(j.user?.username || username);
+  // Note: Your API doesn't have /auth/signup endpoint
+  // Storing credentials locally for demo
+  const users = JSON.parse(localStorage.getItem('kb_users') || '{}');
+  if(users[username.toLowerCase()]) throw new Error('Username already exists');
+  users[username.toLowerCase()] = { username, password };
+  localStorage.setItem('kb_users', JSON.stringify(users));
+  setSession(username);
+  return { ok: true, user: { username } };
 }
+
 async function login(username, password){
   if(!username || !password) throw new Error('username/password ต้องไม่ว่าง');
-  const r = await fetch(api + '/auth/login', {
-    method:'POST', headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({ username, password })
-  });
-  const j = await r.json().catch(()=>({}));
-  if(!r.ok || !j?.ok) throw new Error(j?.error || 'login failed');
-  setSession(j.user?.username || username);
+  // Note: Your API doesn't have /auth/login endpoint
+  // Checking credentials locally
+  const users = JSON.parse(localStorage.getItem('kb_users') || '{}');
+  const user = users[username.toLowerCase()];
+  if(!user || user.password !== password) throw new Error('Invalid username or password');
+  setSession(username);
+  return { ok: true, user: { username } };
 }
+
 function logout(){ setSession(null); }
 
 // ===== Questions helpers =====
 async function fetchQuestions(){
-  const r = await fetch(api + '/questions');
-  const j = await r.json().catch(()=>({}));
-  if(!r.ok || !j?.ok) throw new Error(j?.error || 'load questions failed');
-  const arr = Array.isArray(j.questions) ? j.questions : [];
-  // เรียงล่าสุดบน
-  return arr.slice().sort((a,b)=> String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  try {
+    const r = await fetch(api + '/questions');
+    if(!r.ok) {
+      const errText = await r.text().catch(() => '');
+      console.error('API Error:', r.status, errText);
+      throw new Error('API error ' + r.status + ': ' + (errText || 'Server error'));
+    }
+    const j = await r.json().catch((e)=>{
+      console.error('JSON parse error:', e);
+      return [];
+    });
+    // API returns array directly, not wrapped in {ok, questions}
+    const arr = Array.isArray(j) ? j : [];
+    return arr; // already sorted by API (reversed)
+  } catch(e) {
+    console.error('fetchQuestions error:', e);
+    throw e;
+  }
 }
 
 function threadCard(item){
   const answers = item.answersCount ?? (item.answers?.length || 0);
   const topics = (item.topics||[]).map(x=>`<span class="pill">${escapeHtml(x)}</span>`).join(' ');
   const locs   = (item.locations||[]).map(x=>`<span class="pill">${escapeHtml(x)}</span>`).join(' ');
-  return `<div class="thread card">
+  const qid = item.questionId || '';
+  return `<div class="thread card" style="cursor:pointer" onclick="toggleAnswers('${escapeHtml(qid)}')">
     <div class="votes"><div style="font-size:18px; font-weight:800">${answers}</div><div class="hint">answers</div></div>
     <div>
       <div class="title">${escapeHtml(item.title||'(no title)')}</div>
@@ -236,9 +274,10 @@ function threadCard(item){
       <div class="row">${topics || '<span class="pill">-</span>'}</div>
       <div style="height:6px"></div>
       <div class="row">${locs || '<span class="pill">-</span>'}</div>
-      <div class="meta" style="margin-top:6px">ID: ${escapeHtml(item.questionId||'')}</div>
+      <div class="meta" style="margin-top:6px">ID: ${escapeHtml(qid)} • คลิกเพื่อดูคำตอบ</div>
     </div>
     <div class="meta">${escapeHtml(item.createdAt||'')}</div>
+    <div id="answers-${escapeHtml(qid)}" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--border)"></div>
   </div>`;
 }
 
@@ -261,25 +300,71 @@ function scoreItem(qTokens, item){
 }
 function rankByQuery(items,q){ const qTokens=tokenize(q); if(!qTokens.length) return items.slice(); return items.map(x=>({x,s:scoreItem(qTokens,x)})).sort((a,b)=>b.s-a.s).map(o=>o.x); }
 
+// ===== Modal handling =====
+function showModal(modalId) {
+  $('authModals').classList.add('show');
+  $('signupCard').style.display = modalId === 'signup' ? 'block' : 'none';
+  $('loginCard').style.display = modalId === 'login' ? 'block' : 'none';
+  $('signupError').textContent = '';
+  $('loginError').textContent = '';
+}
+
+function hideModal() {
+  $('authModals').classList.remove('show');
+  $('signupCard').style.display = 'none';
+  $('loginCard').style.display = 'none';
+}
+
 // ===== UI wiring: Modals =====
-$('openSignup').onclick = ()=>{ $('authModals').style.display='grid'; $('signupCard').style.display='block'; $('loginCard').style.display='none'; };
-$('openLogin').onclick  = ()=>{ $('authModals').style.display='grid'; $('signupCard').style.display='none';  $('loginCard').style.display='block'; };
-$('cancelSignup').onclick = ()=>{ $('authModals').style.display='none'; };
-$('cancelLogin').onclick  = ()=>{ $('authModals').style.display='none'; };
+$('openSignup').onclick = () => showModal('signup');
+$('openLogin').onclick  = () => showModal('login');
+$('cancelSignup').onclick = hideModal;
+$('cancelLogin').onclick  = hideModal;
+
+// Close modal when clicking backdrop
+$('authModals').onclick = (e) => {
+  if(e.target === $('authModals')) hideModal();
+};
 
 // ===== Auth buttons =====
 $('doSignup').onclick = async ()=>{
+  const btn = $('doSignup');
+  btn.disabled = true;
+  $('signupError').textContent = '';
+  
   try{
     await signup($('su_user').value.trim(), $('su_pass').value);
-    $('authModals').style.display='none'; renderAuth(); toast('สมัครและเข้าสู่ระบบแล้ว','ok');
-  }catch(e){ toast(e.message||'สมัครไม่สำเร็จ','err'); }
+    hideModal(); 
+    renderAuth(); 
+    toast('สมัครและเข้าสู่ระบบแล้ว','ok');
+    $('su_user').value = '';
+    $('su_pass').value = '';
+  }catch(e){ 
+    $('signupError').textContent = e.message || 'สมัครไม่สำเร็จ';
+  } finally {
+    btn.disabled = false;
+  }
 };
+
 $('doLogin').onclick  = async ()=>{
+  const btn = $('doLogin');
+  btn.disabled = true;
+  $('loginError').textContent = '';
+  
   try{
     await login($('li_user').value.trim(), $('li_pass').value);
-    $('authModals').style.display='none'; renderAuth(); toast('เข้าสู่ระบบแล้ว','ok');
-  }catch(e){ toast(e.message||'เข้าสู่ระบบไม่สำเร็จ','err'); }
+    hideModal(); 
+    renderAuth(); 
+    toast('เข้าสู่ระบบแล้ว','ok');
+    $('li_user').value = '';
+    $('li_pass').value = '';
+  }catch(e){ 
+    $('loginError').textContent = e.message || 'เข้าสู่ระบบไม่สำเร็จ';
+  } finally {
+    btn.disabled = false;
+  }
 };
+
 $('logoutBtn').onclick = ()=>{ logout(); renderAuth(); toast('ออกจากระบบแล้ว','ok'); };
 
 // ===== Search / Latest =====
@@ -290,7 +375,9 @@ $('doSearch').onclick = async ()=>{
     const ranked = q ? rankByQuery(list, q) : list;
     box.innerHTML = ranked.length ? ranked.map(threadCard).join('') : '<span class="hint">ไม่พบผลลัพธ์</span>';
   }catch(e){
-    console.error(e); box.innerHTML='<span class="hint">ค้นหาไม่สำเร็จ</span>'; toast('Search error','err');
+    console.error(e); 
+    box.innerHTML='<span class="hint">ค้นหาไม่สำเร็จ: ' + escapeHtml(e.message) + '</span>'; 
+    toast('Search error: ' + e.message, 'err');
   } finally { sk?.remove?.(); }
 };
 
@@ -301,7 +388,9 @@ $('latest').onclick = async ()=>{
     $('latestCount').textContent = list.length ? `${list.length} กระทู้` : '';
     out.innerHTML = list.length ? list.map(threadCard).join('') : '<span class="hint">ยังไม่มีกระทู้</span>';
   }catch(e){
-    console.error(e); out.innerHTML='<span class="hint">โหลดไม่สำเร็จ</span>'; toast('Load error','err');
+    console.error(e); 
+    out.innerHTML='<span class="hint">โหลดไม่สำเร็จ: ' + escapeHtml(e.message) + '</span>'; 
+    toast('Load error: ' + e.message, 'err');
   } finally { sk?.remove?.(); }
 };
 
@@ -310,41 +399,84 @@ $('ask').onclick = async ()=>{
   if(!getSession()){ toast('กรุณา Login ก่อน','err'); return; }
   const title=$('title').value.trim(); const body=$('body').value.trim();
   if(!title){ toast('ต้องกรอกหัวข้อ','err'); return; }
+  
+  const btn = $('ask');
+  btn.disabled = true;
+  
   try{
     const r = await fetch(api + '/questions', {
       method:'POST',
       headers:{ 'Content-Type':'application/json', ...authHeader() },
       body: JSON.stringify({ title, body })
     });
+    if(!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json().catch(()=>({}));
-    if(!r.ok || !data?.ok){ toast(data?.error || 'โพสต์ไม่สำเร็จ','err'); return; }
-    const qid = data.question?.questionId || '(unknown)';
+    // API returns {status:'ok', questionId:'q-xxx'}
+    if(data.status !== 'ok'){ 
+      toast(data?.error || 'โพสต์ไม่สำเร็จ','err'); 
+      return; 
+    }
+    const qid = data.questionId || '(unknown)';
     $('askOut').textContent = `Question ID: ${qid}`;
     $('title').value=''; $('body').value='';
     toast('โพสต์แล้ว ✅','ok');
-  }catch(e){ console.error(e); toast('Network error','err'); }
+    // Auto refresh
+    setTimeout(() => $('latest').click(), 300);
+  }catch(e){ 
+    console.error(e); 
+    toast('Network error: ' + e.message, 'err'); 
+  } finally {
+    btn.disabled = false;
+  }
 };
 
 $('answer').onclick = async ()=>{
   if(!getSession()){ toast('กรุณา Login ก่อน','err'); return; }
   const qid=$('qid').value.trim(); const body=$('ans').value.trim();
   if(!qid || !body){ toast('ต้องกรอก Question ID และคำตอบ','err'); return; }
+  
+  const btn = $('answer');
+  btn.disabled = true;
+  
   try{
     const r = await fetch(api + `/questions/${encodeURIComponent(qid)}/answers`, {
       method:'POST',
       headers:{ 'Content-Type':'application/json', ...authHeader() },
       body: JSON.stringify({ body })
     });
+    if(!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json().catch(()=>({}));
-    if(!r.ok || !data?.ok){ toast(data?.error || 'ตอบไม่สำเร็จ','err'); return; }
-    const aid = data.answer?.answerId || '(unknown)';
+    // API returns {answerId:'a-xxx'}
+    const aid = data.answerId || '(unknown)';
     $('ansOut').textContent = 'Answer ID: ' + aid;
-    $('ans').value='';
+    $('ans').value=''; $('qid').value='';
     toast('ตอบแล้ว 💬','ok');
-  }catch(e){ console.error(e); toast('Network error','err'); }
+    // Auto refresh
+    setTimeout(() => $('latest').click(), 300);
+  }catch(e){ 
+    console.error(e); 
+    toast('Network error: ' + e.message, 'err'); 
+  } finally {
+    btn.disabled = false;
+  }
 };
 
-window.addEventListener('load', renderAuth);
+// Enter key support
+$('li_pass').addEventListener('keypress', (e) => {
+  if(e.key === 'Enter') $('doLogin').click();
+});
+$('su_pass').addEventListener('keypress', (e) => {
+  if(e.key === 'Enter') $('doSignup').click();
+});
+$('q').addEventListener('keypress', (e) => {
+  if(e.key === 'Enter') $('doSearch').click();
+});
+
+window.addEventListener('load', () => {
+  renderAuth();
+  // Auto-load questions on page load
+  $('latest').click();
+});
 </script>
 </body>
 </html>
