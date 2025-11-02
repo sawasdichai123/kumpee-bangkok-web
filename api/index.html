@@ -271,7 +271,9 @@ function threadCard(item){
     <div style="flex:1">
       <div class="title">${escapeHtml(item.title||'(no title)')}</div>
       <div style="margin:6px 0">${escapeHtml(item.body||'')}</div>
-      
+      <div class="row">${topics || '<span class="pill">-</span>'}</div>
+      <div style="height:6px"></div>
+      <div class="row">${locs || '<span class="pill">-</span>'}</div>
       <div class="meta" style="margin-top:6px">ID: ${escapeHtml(qid)}</div>
       ${answers > 0 ? `<button class="btn" style="margin-top:8px" onclick="event.stopPropagation(); toggleAnswers('${escapeHtml(qid)}')">ดูคำตอบ (${answers})</button>` : ''}
       <div id="answers-${escapeHtml(qid)}" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); grid-column:1/-1"></div>
@@ -384,6 +386,7 @@ $('latest').onclick = async ()=>{
   const out=$('latestOut'); out.innerHTML=''; const sk=skeleton(out);
   try{
     const list = await fetchQuestions();
+    console.log('Loaded questions:', list); // Debug: see what we got
     $('latestCount').textContent = list.length ? `${list.length} กระทู้` : '';
     out.innerHTML = list.length ? list.map(threadCard).join('') : '<span class="hint">ยังไม่มีกระทู้</span>';
   }catch(e){
@@ -450,8 +453,9 @@ $('answer').onclick = async ()=>{
     $('ansOut').textContent = 'Answer ID: ' + aid;
     $('ans').value=''; $('qid').value='';
     toast('ตอบแล้ว 💬','ok');
-    // Auto refresh
-    setTimeout(() => $('latest').click(), 300);
+    // Clear cache and auto refresh
+    answersCache.clear();
+    setTimeout(() => $('latest').click(), 500);
   }catch(e){ 
     console.error(e); 
     toast('Network error: ' + e.message, 'err'); 
@@ -478,21 +482,17 @@ async function fetchAnswersForQuestion(qid) {
   if(answersCache.has(qid)) return answersCache.get(qid);
   
   try {
-    // Fetch all answers and filter for this question
-    const r = await fetch(api + '/questions');
-    if(!r.ok) throw new Error('Failed to load');
+    // Fetch answers directly from /answers endpoint
+    const r = await fetch(api + '/answers');
+    if(!r.ok) throw new Error('Failed to load answers');
     
-    // Try to get answers from a separate endpoint if it exists
-    const answersResp = await fetch(api + '/answers').catch(() => null);
-    let allAnswers = [];
+    const allAnswers = await r.json().catch(() => []);
     
-    if(answersResp && answersResp.ok) {
-      allAnswers = await answersResp.json().catch(() => []);
-    }
-    
-    // Filter answers for this question
+    // Filter answers for this specific question
     const answers = Array.isArray(allAnswers) ? 
       allAnswers.filter(a => a.questionId === qid) : [];
+    
+    console.log('Fetched answers for', qid, ':', answers); // Debug log
     
     answersCache.set(qid, answers);
     return answers;
@@ -504,7 +504,10 @@ async function fetchAnswersForQuestion(qid) {
 
 window.toggleAnswers = async function(qid) {
   const container = document.getElementById(`answers-${qid}`);
-  if(!container) return;
+  if(!container) {
+    console.error('Container not found for qid:', qid);
+    return;
+  }
   
   // Toggle visibility
   if(container.style.display === 'block') {
@@ -517,6 +520,8 @@ window.toggleAnswers = async function(qid) {
   
   try {
     const answers = await fetchAnswersForQuestion(qid);
+    
+    console.log('Displaying', answers.length, 'answers for', qid); // Debug log
     
     if(answers.length === 0) {
       container.innerHTML = '<div class="hint">ยังไม่มีคำตอบ</div>';
@@ -533,8 +538,8 @@ window.toggleAnswers = async function(qid) {
     `).join('');
     
   } catch(e) {
-    console.error(e);
-    container.innerHTML = '<div class="hint" style="color:#ef4444">โหลดคำตอบไม่สำเร็จ</div>';
+    console.error('toggleAnswers error:', e);
+    container.innerHTML = '<div class="hint" style="color:#ef4444">โหลดคำตอบไม่สำเร็จ: ' + escapeHtml(e.message) + '</div>';
   }
 };
 
