@@ -40,7 +40,7 @@
     .hint{color:var(--muted); font-size:12px}
     .pill{display:inline-block; padding:.18rem .5rem; border:1px solid var(--border); border-radius:999px; font-size:12px; color:var(--muted)}
     .list{display:grid; gap:12px}
-    .thread{display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center}
+    .thread{display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:start}
     .votes{display:grid; place-items:center; padding:8px; border:1px solid var(--border); border-radius:10px; min-width:56px}
     .title{font-weight:700}
     .meta{color:var(--muted); font-size:12px}
@@ -266,18 +266,17 @@ function threadCard(item){
   const topics = (item.topics||[]).map(x=>`<span class="pill">${escapeHtml(x)}</span>`).join(' ');
   const locs   = (item.locations||[]).map(x=>`<span class="pill">${escapeHtml(x)}</span>`).join(' ');
   const qid = item.questionId || '';
-  return `<div class="thread card" style="cursor:pointer" onclick="toggleAnswers('${escapeHtml(qid)}')">
+  return `<div class="thread card">
     <div class="votes"><div style="font-size:18px; font-weight:800">${answers}</div><div class="hint">answers</div></div>
-    <div>
+    <div style="flex:1">
       <div class="title">${escapeHtml(item.title||'(no title)')}</div>
       <div style="margin:6px 0">${escapeHtml(item.body||'')}</div>
-      <div class="row">${topics || '<span class="pill">-</span>'}</div>
-      <div style="height:6px"></div>
-      <div class="row">${locs || '<span class="pill">-</span>'}</div>
-      <div class="meta" style="margin-top:6px">ID: ${escapeHtml(qid)} • คลิกเพื่อดูคำตอบ</div>
+      
+      <div class="meta" style="margin-top:6px">ID: ${escapeHtml(qid)}</div>
+      ${answers > 0 ? `<button class="btn" style="margin-top:8px" onclick="event.stopPropagation(); toggleAnswers('${escapeHtml(qid)}')">ดูคำตอบ (${answers})</button>` : ''}
+      <div id="answers-${escapeHtml(qid)}" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); grid-column:1/-1"></div>
     </div>
     <div class="meta">${escapeHtml(item.createdAt||'')}</div>
-    <div id="answers-${escapeHtml(qid)}" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--border)"></div>
   </div>`;
 }
 
@@ -471,6 +470,73 @@ $('su_pass').addEventListener('keypress', (e) => {
 $('q').addEventListener('keypress', (e) => {
   if(e.key === 'Enter') $('doSearch').click();
 });
+
+// ===== Toggle Answers Display =====
+const answersCache = new Map();
+
+async function fetchAnswersForQuestion(qid) {
+  if(answersCache.has(qid)) return answersCache.get(qid);
+  
+  try {
+    // Fetch all answers and filter for this question
+    const r = await fetch(api + '/questions');
+    if(!r.ok) throw new Error('Failed to load');
+    
+    // Try to get answers from a separate endpoint if it exists
+    const answersResp = await fetch(api + '/answers').catch(() => null);
+    let allAnswers = [];
+    
+    if(answersResp && answersResp.ok) {
+      allAnswers = await answersResp.json().catch(() => []);
+    }
+    
+    // Filter answers for this question
+    const answers = Array.isArray(allAnswers) ? 
+      allAnswers.filter(a => a.questionId === qid) : [];
+    
+    answersCache.set(qid, answers);
+    return answers;
+  } catch(e) {
+    console.error('fetchAnswers error:', e);
+    return [];
+  }
+}
+
+window.toggleAnswers = async function(qid) {
+  const container = document.getElementById(`answers-${qid}`);
+  if(!container) return;
+  
+  // Toggle visibility
+  if(container.style.display === 'block') {
+    container.style.display = 'none';
+    return;
+  }
+  
+  container.style.display = 'block';
+  container.innerHTML = '<div class="skeleton"></div>';
+  
+  try {
+    const answers = await fetchAnswersForQuestion(qid);
+    
+    if(answers.length === 0) {
+      container.innerHTML = '<div class="hint">ยังไม่มีคำตอบ</div>';
+      return;
+    }
+    
+    container.innerHTML = answers.map(a => `
+      <div style="padding:12px; background:var(--bg); border-radius:8px; margin-bottom:8px">
+        <div style="font-size:14px; line-height:1.6">${escapeHtml(a.body || '')}</div>
+        <div class="meta" style="margin-top:6px">
+          โดย @${escapeHtml(a.author || 'anon')} • ${escapeHtml(a.createdAt || '')}
+        </div>
+      </div>
+    `).join('');
+    
+  } catch(e) {
+    console.error(e);
+    container.innerHTML = '<div class="hint" style="color:#ef4444">โหลดคำตอบไม่สำเร็จ</div>';
+  }
+};
 
 window.addEventListener('load', () => {
   renderAuth();
