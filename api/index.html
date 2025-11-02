@@ -64,7 +64,7 @@
       <div class="logo">KB</div>
       <div class="brand">
         <h1>Kumpee Bangkok • Webboard</h1>
-        <p>โฮสต์ API บน EC2/Cloud9 • เก็บข้อมูลเป็น JSON บน S3 (private)</p>
+      <p>โฮสต์ API บน EC2/Cloud9 • เก็บข้อมูลเป็น JSON บน S3 (private)</p>
       </div>
       <div class="row">
         <button id="openSignup" class="btn">Sign up</button>
@@ -161,8 +161,7 @@
 
 <script>
 /* =======================
-   Kumpee Bangkok Webboard — Frontend (Fixed)
-   Connects to your AWS API endpoints
+   Kumpee Bangkok Webboard — Frontend (Robust answers fetch)
    ======================= */
 
 const api = window.location.origin; // same-origin
@@ -175,33 +174,20 @@ function toast(msg, kind='ok'){
 }
 function skeleton(parent){ const s=document.createElement('div'); s.className='skeleton'; parent.appendChild(s); return s; }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
+const normId = v => String(v ?? '').trim().toLowerCase();
 
 // ===== Session =====
 function getSession(){ 
   const data = localStorage.getItem('kb_session');
   if(!data) return null;
-  try {
-    const parsed = JSON.parse(data);
-    return typeof parsed === 'string' ? parsed : (parsed?.username || null);
-  } catch(e) {
-    return data;
-  }
+  try { const parsed = JSON.parse(data); return typeof parsed === 'string' ? parsed : (parsed?.username || null); }
+  catch { return data; }
 }
-
 function setSession(u){ 
-  if(u) {
-    const username = typeof u === 'string' ? u : u?.username;
-    if(username) localStorage.setItem('kb_session', username);
-  } else {
-    localStorage.removeItem('kb_session');
-  }
+  if(u){ const username = typeof u === 'string' ? u : u?.username; if(username) localStorage.setItem('kb_session', username); }
+  else { localStorage.removeItem('kb_session'); }
 }
-
-function authHeader(){ 
-  const username = getSession();
-  return username ? { 'X-User': username } : {}; 
-}
-
+function authHeader(){ const username = getSession(); return username ? { 'X-User': username } : {}; }
 function renderAuth(){
   const username = getSession();
   $('who').textContent = username ? `Signed in as @${username}` : '';
@@ -210,7 +196,7 @@ function renderAuth(){
   $('openLogin').style.display  = username ? 'none' : 'inline-block';
 }
 
-// ===== Auth (demo local) =====
+// ===== Auth (local demo) =====
 async function signup(username, password){
   if(!username || !password) throw new Error('username/password ต้องไม่ว่าง');
   const users = JSON.parse(localStorage.getItem('kb_users') || '{}');
@@ -220,7 +206,6 @@ async function signup(username, password){
   setSession(username);
   return { ok: true, user: { username } };
 }
-
 async function login(username, password){
   if(!username || !password) throw new Error('username/password ต้องไม่ว่าง');
   const users = JSON.parse(localStorage.getItem('kb_users') || '{}');
@@ -229,40 +214,30 @@ async function login(username, password){
   setSession(username);
   return { ok: true, user: { username } };
 }
-
 function logout(){ setSession(null); }
 
 // ===== Questions helpers =====
 async function fetchQuestions(){
-  try {
-    const r = await fetch(api + '/questions', { cache: 'no-store' }); // ⬅ กันแคช
-    if(!r.ok) {
-      const errText = await r.text().catch(() => '');
-      throw new Error('API error ' + r.status + ': ' + (errText || 'Server error'));
-    }
-    const j = await r.json().catch(()=>[]);
-    return Array.isArray(j) ? j : [];
-  } catch(e) {
-    console.error('fetchQuestions error:', e);
-    throw e;
-  }
+  const url = `${api}/questions?t=${Date.now()}`;
+  const r = await fetch(url, { cache:'no-store', headers:{...authHeader()} });
+  if(!r.ok) throw new Error('API ' + r.status);
+  const j = await r.json().catch(()=>[]);
+  return Array.isArray(j) ? j : [];
 }
 
 function threadCard(item){
   const answers = item.answersCount ?? (item.answers?.length || 0);
   const topics = (item.topics||[]).map(x=>`<span class="pill">${escapeHtml(x)}</span>`).join(' ');
   const locs   = (item.locations||[]).map(x=>`<span class="pill">${escapeHtml(x)}</span>`).join(' ');
-  const qid = item.questionId || '';
+  const qid = item.questionId || item.qid || item.question_id || '';
   return `<div class="thread card">
     <div class="votes"><div style="font-size:18px; font-weight:800">${answers}</div><div class="hint">answers</div></div>
     <div style="flex:1">
       <div class="title">${escapeHtml(item.title||'(no title)')}</div>
       <div style="margin:6px 0">${escapeHtml(item.body||'')}</div>
-      <div class="row">${topics || '<span class="pill">-</span>'}</div>
-      <div style="height:6px"></div>
-      <div class="row">${locs || '<span class="pill">-</span>'}</div>
+      
       <div class="meta" style="margin-top:6px">ID: ${escapeHtml(qid)}</div>
-      ${answers > 0 ? `<button class="btn" style="margin-top:8px" onclick="event.stopPropagation(); toggleAnswers('${escapeHtml(qid)}')">ดูคำตอบ (${answers})</button>` : `<button class="btn" style="margin-top:8px" onclick="event.stopPropagation(); toggleAnswers('${escapeHtml(qid)}')">ดูคำตอบ</button>`}
+      <button class="btn" style="margin-top:8px" onclick="event.stopPropagation(); toggleAnswers('${escapeHtml(qid)}')">ดูคำตอบ${answers>0?` (${answers})`:''}</button>
       <div id="answers-${escapeHtml(qid)}" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); grid-column:1/-1"></div>
     </div>
     <div class="meta">${escapeHtml(item.createdAt||'')}</div>
@@ -293,8 +268,7 @@ function showModal(modalId) {
   $('authModals').classList.add('show');
   $('signupCard').style.display = modalId === 'signup' ? 'block' : 'none';
   $('loginCard').style.display = modalId === 'login' ? 'block' : 'none';
-  $('signupError').textContent = '';
-  $('loginError').textContent = '';
+  $('signupError').textContent = ''; $('loginError').textContent = '';
 }
 function hideModal() {
   $('authModals').classList.remove('show');
@@ -311,9 +285,7 @@ $('authModals').onclick = (e) => { if(e.target === $('authModals')) hideModal();
 
 // ===== Auth buttons =====
 $('doSignup').onclick = async ()=>{
-  const btn = $('doSignup');
-  btn.disabled = true;
-  $('signupError').textContent = '';
+  const btn = $('doSignup'); btn.disabled = true; $('signupError').textContent = '';
   try{
     await signup($('su_user').value.trim(), $('su_pass').value);
     hideModal(); renderAuth(); toast('สมัครและเข้าสู่ระบบแล้ว','ok');
@@ -323,9 +295,7 @@ $('doSignup').onclick = async ()=>{
 };
 
 $('doLogin').onclick  = async ()=>{
-  const btn = $('doLogin');
-  btn.disabled = true;
-  $('loginError').textContent = '';
+  const btn = $('doLogin'); btn.disabled = true; $('loginError').textContent = '';
   try{
     await login($('li_user').value.trim(), $('li_pass').value);
     hideModal(); renderAuth(); toast('เข้าสู่ระบบแล้ว','ok');
@@ -361,42 +331,71 @@ $('latest').onclick = async ()=>{
   } finally { sk?.remove?.(); }
 };
 
-// ===== Answers (fixed: fresh load, no cache, partial refresh) =====
+// ===== Answers (robust & cache-busting) =====
 const answersCache = new Map();
 
-async function fetchAnswersForQuestion(qid) {
-  if (answersCache.has(qid)) return answersCache.get(qid);
+// ดึง field id จากคำตอบที่อาจใช้ชื่อหลายแบบ
+function getAnswerQid(a){
+  return a?.questionId ?? a?.qid ?? a?.question_id ?? a?.questionID ?? a?.QuestionId ?? null;
+}
+
+// ดึง answers เป็นขั้นๆ: 1) /questions/:qid/answers 2) /questions/:qid 3) /answers แล้วกรอง
+async function fetchAnswersForQuestion(qidRaw) {
+  const qid = String(qidRaw ?? '');
+  if(!qid) return [];
+  if(answersCache.has(qid)) return answersCache.get(qid);
+
+  // helper: save & return
+  const save = (arr)=>{ const a = Array.isArray(arr)?arr:[]; answersCache.set(qid, a); return a; };
+
   try {
-    // พยายามเรียก endpoint รายกระทู้ก่อน
-    let r = await fetch(`${api}/questions/${encodeURIComponent(qid)}/answers`, { cache: 'no-store' });
-    if (r.status === 404) {
-      // ถ้าไม่มี route ให้ fallback ไป /answers ทั้งหมดแล้วกรอง
-      r = await fetch(api + '/answers', { cache: 'no-store' });
-      if (!r.ok) throw new Error('Failed to load answers');
-      const allAnswers = await r.json().catch(() => []);
-      const answers = Array.isArray(allAnswers) ? allAnswers.filter(a => a.questionId === qid) : [];
-      answersCache.set(qid, answers);
-      return answers;
+    // 1) /questions/:qid/answers
+    {
+      const url = `${api}/questions/${encodeURIComponent(qid)}/answers?t=${Date.now()}`;
+      const r = await fetch(url, { cache:'no-store', headers:{...authHeader()} });
+      if (r.ok) {
+        const data = await r.json().catch(()=>[]);
+        const arr  = Array.isArray(data) ? data : (data.answers || data.items || data.data || []);
+        if (arr.length) return save(arr);
+        // even if empty array -> keep searching next sources (บางแบ็กเอนด์ไม่คืนรายการที่เพิ่งสร้างทันที)
+      }
     }
-    if (!r.ok) throw new Error('Failed to load answers');
-    const data = await r.json().catch(() => []);
-    const arr = Array.isArray(data) ? data : (data.answers || []);
-    answersCache.set(qid, arr);
-    return arr;
+
+    // 2) /questions/:qid (มี answers ฝัง)
+    {
+      const url = `${api}/questions/${encodeURIComponent(qid)}?t=${Date.now()}`;
+      const r = await fetch(url, { cache:'no-store', headers:{...authHeader()} });
+      if (r.ok) {
+        const data = await r.json().catch(()=>null);
+        const arr = data?.answers || data?.Answers || [];
+        if (Array.isArray(arr) && arr.length) return save(arr);
+      }
+    }
+
+    // 3) /answers ทั้งหมด แล้วกรองแบบยืดหยุ่น
+    {
+      const url = `${api}/answers?t=${Date.now()}`;
+      const r = await fetch(url, { cache:'no-store', headers:{...authHeader()} });
+      if (!r.ok) throw new Error('Failed to load /answers');
+      const all = await r.json().catch(()=>[]);
+      const list = Array.isArray(all) ? all : (all.items || all.data || []);
+      const filtered = list.filter(a => normId(getAnswerQid(a)) === normId(qid));
+      return save(filtered);
+    }
   } catch(e) {
     console.error('fetchAnswersForQuestion error:', e);
-    return [];
+    return save([]);
   }
 }
 
-window.toggleAnswers = async function(qid) {
+window.toggleAnswers = async function(qid){
   const container = document.getElementById(`answers-${qid}`);
   if(!container) return;
-  if(container.style.display === 'block') { container.style.display = 'none'; return; }
+  if(container.style.display === 'block'){ container.style.display='none'; return; }
   container.style.display = 'block';
   container.innerHTML = '<div class="skeleton"></div>';
-  try {
-    // ล้างแคชเพื่อบังคับโหลดสดทุกครั้งที่เปิด
+  try{
+    // ล้างแคชก่อน บังคับโหลดสด
     answersCache.delete(qid);
     const answers = await fetchAnswersForQuestion(qid);
     if(!answers.length){
@@ -405,12 +404,14 @@ window.toggleAnswers = async function(qid) {
     }
     container.innerHTML = answers.map(a => `
       <div style="padding:12px; background:var(--bg); border-radius:8px; margin-bottom:8px">
-        <div style="font-size:14px; line-height:1.6">${escapeHtml(a.body || '')}</div>
-        <div class="meta" style="margin-top:6px">โดย @${escapeHtml(a.author || 'anon')} • ${escapeHtml(a.createdAt || '')}</div>
+        <div style="font-size:14px; line-height:1.6">${escapeHtml(a.body || a.content || '')}</div>
+        <div class="meta" style="margin-top:6px">
+          โดย @${escapeHtml(a.author || a.user || 'anon')} • ${escapeHtml(a.createdAt || a.ts || '')}
+        </div>
       </div>
     `).join('');
-  } catch(e) {
-    container.innerHTML = '<div class="hint" style="color:#ef4444">โหลดคำตอบไม่สำเร็จ: ' + escapeHtml(e.message) + '</div>';
+  }catch(e){
+    container.innerHTML = '<div class="hint" style="color:#ef4444">โหลดคำตอบไม่สำเร็จ</div>';
   }
 };
 
@@ -421,19 +422,18 @@ $('ask').onclick = async ()=>{
   if(!title){ toast('ต้องกรอกหัวข้อ','err'); return; }
   const btn = $('ask'); btn.disabled = true;
   try{
-    const r = await fetch(api + '/questions', {
+    const r = await fetch(`${api}/questions?t=${Date.now()}`, {
       method:'POST',
       headers:{ 'Content-Type':'application/json', ...authHeader() },
       body: JSON.stringify({ title, body })
     });
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json().catch(()=>({}));
-    if(data.status !== 'ok'){ toast(data?.error || 'โพสต์ไม่สำเร็จ','err'); return; }
-    const qid = data.questionId || '(unknown)';
+    const qid = data.questionId || data.qid || data.question_id || '(unknown)';
     $('askOut').textContent = `Question ID: ${qid}`;
     $('title').value=''; $('body').value='';
     toast('โพสต์แล้ว ✅','ok');
-    setTimeout(() => $('latest').click(), 300);
+    setTimeout(() => $('latest').click(), 200);
   }catch(e){ toast('Network error: ' + e.message, 'err');
   } finally { btn.disabled = false; }
 };
@@ -444,19 +444,19 @@ $('answer').onclick = async ()=>{
   if(!qid || !body){ toast('ต้องกรอก Question ID และคำตอบ','err'); return; }
   const btn = $('answer'); btn.disabled = true;
   try{
-    const r = await fetch(api + `/questions/${encodeURIComponent(qid)}/answers`, {
+    const r = await fetch(`${api}/questions/${encodeURIComponent(qid)}/answers?t=${Date.now()}`, {
       method:'POST',
       headers:{ 'Content-Type':'application/json', ...authHeader() },
       body: JSON.stringify({ body })
     });
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json().catch(()=>({}));
-    const aid = data.answerId || '(unknown)';
+    const aid = data.answerId || data.id || '(unknown)';
     $('ansOut').textContent = 'Answer ID: ' + aid;
     $('ans').value=''; $('qid').value='';
     toast('ตอบแล้ว 💬','ok');
 
-    // ✅ อัปเดตเฉพาะกล่องคำตอบของกระทู้นั้นทันที (ถ้ากล่องเปิดอยู่)
+    // อัปเดตกล่องคำตอบของโพสต์นั้นทันที (ถ้าเปิดอยู่)
     answersCache.delete(qid);
     const container = document.getElementById(`answers-${qid}`);
     if (container && container.style.display === 'block') {
@@ -465,13 +465,14 @@ $('answer').onclick = async ()=>{
       container.innerHTML = answers.length
         ? answers.map(a => `
             <div style="padding:12px; background:var(--bg); border-radius:8px; margin-bottom:8px">
-              <div style="font-size:14px; line-height:1.6">${escapeHtml(a.body || '')}</div>
-              <div class="meta" style="margin-top:6px">โดย @${escapeHtml(a.author || 'anon')} • ${escapeHtml(a.createdAt || '')}</div>
+              <div style="font-size:14px; line-height:1.6">${escapeHtml(a.body || a.content || '')}</div>
+              <div class="meta" style="margin-top:6px">
+                โดย @${escapeHtml(a.author || a.user || 'anon')} • ${escapeHtml(a.createdAt || a.ts || '')}
+              </div>
             </div>
           `).join('')
         : '<div class="hint">ยังไม่มีคำตอบ</div>';
     } else {
-      // ถ้ายังไม่ได้เปิดกล่องคำตอบ ก็รีเฟรชรายการกระทู้ไว้ก่อน
       $('latest').click();
     }
   }catch(e){ toast('Network error: ' + e.message, 'err');
