@@ -180,19 +180,16 @@ function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m=>({"&":"&amp;","<
 function getSession(){ 
   const data = localStorage.getItem('kb_session');
   if(!data) return null;
-  // Handle both string and JSON formats
   try {
     const parsed = JSON.parse(data);
     return typeof parsed === 'string' ? parsed : (parsed?.username || null);
   } catch(e) {
-    // If it's not JSON, it's a plain string username
     return data;
   }
 }
 
 function setSession(u){ 
   if(u) {
-    // Always store as plain string username
     const username = typeof u === 'string' ? u : u?.username;
     if(username) localStorage.setItem('kb_session', username);
   } else {
@@ -213,11 +210,9 @@ function renderAuth(){
   $('openLogin').style.display  = username ? 'none' : 'inline-block';
 }
 
-// ===== Auth (call server) =====
+// ===== Auth (demo local) =====
 async function signup(username, password){
   if(!username || !password) throw new Error('username/password ต้องไม่ว่าง');
-  // Note: Your API doesn't have /auth/signup endpoint
-  // Storing credentials locally for demo
   const users = JSON.parse(localStorage.getItem('kb_users') || '{}');
   if(users[username.toLowerCase()]) throw new Error('Username already exists');
   users[username.toLowerCase()] = { username, password };
@@ -228,8 +223,6 @@ async function signup(username, password){
 
 async function login(username, password){
   if(!username || !password) throw new Error('username/password ต้องไม่ว่าง');
-  // Note: Your API doesn't have /auth/login endpoint
-  // Checking credentials locally
   const users = JSON.parse(localStorage.getItem('kb_users') || '{}');
   const user = users[username.toLowerCase()];
   if(!user || user.password !== password) throw new Error('Invalid username or password');
@@ -242,19 +235,13 @@ function logout(){ setSession(null); }
 // ===== Questions helpers =====
 async function fetchQuestions(){
   try {
-    const r = await fetch(api + '/questions');
+    const r = await fetch(api + '/questions', { cache: 'no-store' }); // ⬅ กันแคช
     if(!r.ok) {
       const errText = await r.text().catch(() => '');
-      console.error('API Error:', r.status, errText);
       throw new Error('API error ' + r.status + ': ' + (errText || 'Server error'));
     }
-    const j = await r.json().catch((e)=>{
-      console.error('JSON parse error:', e);
-      return [];
-    });
-    // API returns array directly, not wrapped in {ok, questions}
-    const arr = Array.isArray(j) ? j : [];
-    return arr; // already sorted by API (reversed)
+    const j = await r.json().catch(()=>[]);
+    return Array.isArray(j) ? j : [];
   } catch(e) {
     console.error('fetchQuestions error:', e);
     throw e;
@@ -275,7 +262,7 @@ function threadCard(item){
       <div style="height:6px"></div>
       <div class="row">${locs || '<span class="pill">-</span>'}</div>
       <div class="meta" style="margin-top:6px">ID: ${escapeHtml(qid)}</div>
-      ${answers > 0 ? `<button class="btn" style="margin-top:8px" onclick="event.stopPropagation(); toggleAnswers('${escapeHtml(qid)}')">ดูคำตอบ (${answers})</button>` : ''}
+      ${answers > 0 ? `<button class="btn" style="margin-top:8px" onclick="event.stopPropagation(); toggleAnswers('${escapeHtml(qid)}')">ดูคำตอบ (${answers})</button>` : `<button class="btn" style="margin-top:8px" onclick="event.stopPropagation(); toggleAnswers('${escapeHtml(qid)}')">ดูคำตอบ</button>`}
       <div id="answers-${escapeHtml(qid)}" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); grid-column:1/-1"></div>
     </div>
     <div class="meta">${escapeHtml(item.createdAt||'')}</div>
@@ -309,7 +296,6 @@ function showModal(modalId) {
   $('signupError').textContent = '';
   $('loginError').textContent = '';
 }
-
 function hideModal() {
   $('authModals').classList.remove('show');
   $('signupCard').style.display = 'none';
@@ -321,49 +307,31 @@ $('openSignup').onclick = () => showModal('signup');
 $('openLogin').onclick  = () => showModal('login');
 $('cancelSignup').onclick = hideModal;
 $('cancelLogin').onclick  = hideModal;
-
-// Close modal when clicking backdrop
-$('authModals').onclick = (e) => {
-  if(e.target === $('authModals')) hideModal();
-};
+$('authModals').onclick = (e) => { if(e.target === $('authModals')) hideModal(); };
 
 // ===== Auth buttons =====
 $('doSignup').onclick = async ()=>{
   const btn = $('doSignup');
   btn.disabled = true;
   $('signupError').textContent = '';
-  
   try{
     await signup($('su_user').value.trim(), $('su_pass').value);
-    hideModal(); 
-    renderAuth(); 
-    toast('สมัครและเข้าสู่ระบบแล้ว','ok');
-    $('su_user').value = '';
-    $('su_pass').value = '';
-  }catch(e){ 
-    $('signupError').textContent = e.message || 'สมัครไม่สำเร็จ';
-  } finally {
-    btn.disabled = false;
-  }
+    hideModal(); renderAuth(); toast('สมัครและเข้าสู่ระบบแล้ว','ok');
+    $('su_user').value = ''; $('su_pass').value = '';
+  }catch(e){ $('signupError').textContent = e.message || 'สมัครไม่สำเร็จ';
+  } finally { btn.disabled = false; }
 };
 
 $('doLogin').onclick  = async ()=>{
   const btn = $('doLogin');
   btn.disabled = true;
   $('loginError').textContent = '';
-  
   try{
     await login($('li_user').value.trim(), $('li_pass').value);
-    hideModal(); 
-    renderAuth(); 
-    toast('เข้าสู่ระบบแล้ว','ok');
-    $('li_user').value = '';
-    $('li_pass').value = '';
-  }catch(e){ 
-    $('loginError').textContent = e.message || 'เข้าสู่ระบบไม่สำเร็จ';
-  } finally {
-    btn.disabled = false;
-  }
+    hideModal(); renderAuth(); toast('เข้าสู่ระบบแล้ว','ok');
+    $('li_user').value = ''; $('li_pass').value = '';
+  }catch(e){ $('loginError').textContent = e.message || 'เข้าสู่ระบบไม่สำเร็จ';
+  } finally { btn.disabled = false; }
 };
 
 $('logoutBtn').onclick = ()=>{ logout(); renderAuth(); toast('ออกจากระบบแล้ว','ok'); };
@@ -376,7 +344,6 @@ $('doSearch').onclick = async ()=>{
     const ranked = q ? rankByQuery(list, q) : list;
     box.innerHTML = ranked.length ? ranked.map(threadCard).join('') : '<span class="hint">ไม่พบผลลัพธ์</span>';
   }catch(e){
-    console.error(e); 
     box.innerHTML='<span class="hint">ค้นหาไม่สำเร็จ: ' + escapeHtml(e.message) + '</span>'; 
     toast('Search error: ' + e.message, 'err');
   } finally { sk?.remove?.(); }
@@ -386,14 +353,65 @@ $('latest').onclick = async ()=>{
   const out=$('latestOut'); out.innerHTML=''; const sk=skeleton(out);
   try{
     const list = await fetchQuestions();
-    console.log('Loaded questions:', list); // Debug: see what we got
     $('latestCount').textContent = list.length ? `${list.length} กระทู้` : '';
     out.innerHTML = list.length ? list.map(threadCard).join('') : '<span class="hint">ยังไม่มีกระทู้</span>';
   }catch(e){
-    console.error(e); 
     out.innerHTML='<span class="hint">โหลดไม่สำเร็จ: ' + escapeHtml(e.message) + '</span>'; 
     toast('Load error: ' + e.message, 'err');
   } finally { sk?.remove?.(); }
+};
+
+// ===== Answers (fixed: fresh load, no cache, partial refresh) =====
+const answersCache = new Map();
+
+async function fetchAnswersForQuestion(qid) {
+  if (answersCache.has(qid)) return answersCache.get(qid);
+  try {
+    // พยายามเรียก endpoint รายกระทู้ก่อน
+    let r = await fetch(`${api}/questions/${encodeURIComponent(qid)}/answers`, { cache: 'no-store' });
+    if (r.status === 404) {
+      // ถ้าไม่มี route ให้ fallback ไป /answers ทั้งหมดแล้วกรอง
+      r = await fetch(api + '/answers', { cache: 'no-store' });
+      if (!r.ok) throw new Error('Failed to load answers');
+      const allAnswers = await r.json().catch(() => []);
+      const answers = Array.isArray(allAnswers) ? allAnswers.filter(a => a.questionId === qid) : [];
+      answersCache.set(qid, answers);
+      return answers;
+    }
+    if (!r.ok) throw new Error('Failed to load answers');
+    const data = await r.json().catch(() => []);
+    const arr = Array.isArray(data) ? data : (data.answers || []);
+    answersCache.set(qid, arr);
+    return arr;
+  } catch(e) {
+    console.error('fetchAnswersForQuestion error:', e);
+    return [];
+  }
+}
+
+window.toggleAnswers = async function(qid) {
+  const container = document.getElementById(`answers-${qid}`);
+  if(!container) return;
+  if(container.style.display === 'block') { container.style.display = 'none'; return; }
+  container.style.display = 'block';
+  container.innerHTML = '<div class="skeleton"></div>';
+  try {
+    // ล้างแคชเพื่อบังคับโหลดสดทุกครั้งที่เปิด
+    answersCache.delete(qid);
+    const answers = await fetchAnswersForQuestion(qid);
+    if(!answers.length){
+      container.innerHTML = '<div class="hint">ยังไม่มีคำตอบ</div>';
+      return;
+    }
+    container.innerHTML = answers.map(a => `
+      <div style="padding:12px; background:var(--bg); border-radius:8px; margin-bottom:8px">
+        <div style="font-size:14px; line-height:1.6">${escapeHtml(a.body || '')}</div>
+        <div class="meta" style="margin-top:6px">โดย @${escapeHtml(a.author || 'anon')} • ${escapeHtml(a.createdAt || '')}</div>
+      </div>
+    `).join('');
+  } catch(e) {
+    container.innerHTML = '<div class="hint" style="color:#ef4444">โหลดคำตอบไม่สำเร็จ: ' + escapeHtml(e.message) + '</div>';
+  }
 };
 
 // ===== Ask / Answer =====
@@ -401,10 +419,7 @@ $('ask').onclick = async ()=>{
   if(!getSession()){ toast('กรุณา Login ก่อน','err'); return; }
   const title=$('title').value.trim(); const body=$('body').value.trim();
   if(!title){ toast('ต้องกรอกหัวข้อ','err'); return; }
-  
-  const btn = $('ask');
-  btn.disabled = true;
-  
+  const btn = $('ask'); btn.disabled = true;
   try{
     const r = await fetch(api + '/questions', {
       method:'POST',
@@ -413,33 +428,21 @@ $('ask').onclick = async ()=>{
     });
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json().catch(()=>({}));
-    // API returns {status:'ok', questionId:'q-xxx'}
-    if(data.status !== 'ok'){ 
-      toast(data?.error || 'โพสต์ไม่สำเร็จ','err'); 
-      return; 
-    }
+    if(data.status !== 'ok'){ toast(data?.error || 'โพสต์ไม่สำเร็จ','err'); return; }
     const qid = data.questionId || '(unknown)';
     $('askOut').textContent = `Question ID: ${qid}`;
     $('title').value=''; $('body').value='';
     toast('โพสต์แล้ว ✅','ok');
-    // Auto refresh
     setTimeout(() => $('latest').click(), 300);
-  }catch(e){ 
-    console.error(e); 
-    toast('Network error: ' + e.message, 'err'); 
-  } finally {
-    btn.disabled = false;
-  }
+  }catch(e){ toast('Network error: ' + e.message, 'err');
+  } finally { btn.disabled = false; }
 };
 
 $('answer').onclick = async ()=>{
   if(!getSession()){ toast('กรุณา Login ก่อน','err'); return; }
   const qid=$('qid').value.trim(); const body=$('ans').value.trim();
   if(!qid || !body){ toast('ต้องกรอก Question ID และคำตอบ','err'); return; }
-  
-  const btn = $('answer');
-  btn.disabled = true;
-  
+  const btn = $('answer'); btn.disabled = true;
   try{
     const r = await fetch(api + `/questions/${encodeURIComponent(qid)}/answers`, {
       method:'POST',
@@ -448,105 +451,41 @@ $('answer').onclick = async ()=>{
     });
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json().catch(()=>({}));
-    // API returns {answerId:'a-xxx'}
     const aid = data.answerId || '(unknown)';
     $('ansOut').textContent = 'Answer ID: ' + aid;
     $('ans').value=''; $('qid').value='';
     toast('ตอบแล้ว 💬','ok');
-    // Clear cache and auto refresh
-    answersCache.clear();
-    setTimeout(() => $('latest').click(), 500);
-  }catch(e){ 
-    console.error(e); 
-    toast('Network error: ' + e.message, 'err'); 
-  } finally {
-    btn.disabled = false;
-  }
+
+    // ✅ อัปเดตเฉพาะกล่องคำตอบของกระทู้นั้นทันที (ถ้ากล่องเปิดอยู่)
+    answersCache.delete(qid);
+    const container = document.getElementById(`answers-${qid}`);
+    if (container && container.style.display === 'block') {
+      container.innerHTML = '<div class="skeleton"></div>';
+      const answers = await fetchAnswersForQuestion(qid);
+      container.innerHTML = answers.length
+        ? answers.map(a => `
+            <div style="padding:12px; background:var(--bg); border-radius:8px; margin-bottom:8px">
+              <div style="font-size:14px; line-height:1.6">${escapeHtml(a.body || '')}</div>
+              <div class="meta" style="margin-top:6px">โดย @${escapeHtml(a.author || 'anon')} • ${escapeHtml(a.createdAt || '')}</div>
+            </div>
+          `).join('')
+        : '<div class="hint">ยังไม่มีคำตอบ</div>';
+    } else {
+      // ถ้ายังไม่ได้เปิดกล่องคำตอบ ก็รีเฟรชรายการกระทู้ไว้ก่อน
+      $('latest').click();
+    }
+  }catch(e){ toast('Network error: ' + e.message, 'err');
+  } finally { btn.disabled = false; }
 };
 
 // Enter key support
-$('li_pass').addEventListener('keypress', (e) => {
-  if(e.key === 'Enter') $('doLogin').click();
-});
-$('su_pass').addEventListener('keypress', (e) => {
-  if(e.key === 'Enter') $('doSignup').click();
-});
-$('q').addEventListener('keypress', (e) => {
-  if(e.key === 'Enter') $('doSearch').click();
-});
-
-// ===== Toggle Answers Display =====
-const answersCache = new Map();
-
-async function fetchAnswersForQuestion(qid) {
-  if(answersCache.has(qid)) return answersCache.get(qid);
-  
-  try {
-    // Fetch answers directly from /answers endpoint
-    const r = await fetch(api + '/answers');
-    if(!r.ok) throw new Error('Failed to load answers');
-    
-    const allAnswers = await r.json().catch(() => []);
-    
-    // Filter answers for this specific question
-    const answers = Array.isArray(allAnswers) ? 
-      allAnswers.filter(a => a.questionId === qid) : [];
-    
-    console.log('Fetched answers for', qid, ':', answers); // Debug log
-    
-    answersCache.set(qid, answers);
-    return answers;
-  } catch(e) {
-    console.error('fetchAnswers error:', e);
-    return [];
-  }
-}
-
-window.toggleAnswers = async function(qid) {
-  const container = document.getElementById(`answers-${qid}`);
-  if(!container) {
-    console.error('Container not found for qid:', qid);
-    return;
-  }
-  
-  // Toggle visibility
-  if(container.style.display === 'block') {
-    container.style.display = 'none';
-    return;
-  }
-  
-  container.style.display = 'block';
-  container.innerHTML = '<div class="skeleton"></div>';
-  
-  try {
-    const answers = await fetchAnswersForQuestion(qid);
-    
-    console.log('Displaying', answers.length, 'answers for', qid); // Debug log
-    
-    if(answers.length === 0) {
-      container.innerHTML = '<div class="hint">ยังไม่มีคำตอบ</div>';
-      return;
-    }
-    
-    container.innerHTML = answers.map(a => `
-      <div style="padding:12px; background:var(--bg); border-radius:8px; margin-bottom:8px">
-        <div style="font-size:14px; line-height:1.6">${escapeHtml(a.body || '')}</div>
-        <div class="meta" style="margin-top:6px">
-          โดย @${escapeHtml(a.author || 'anon')} • ${escapeHtml(a.createdAt || '')}
-        </div>
-      </div>
-    `).join('');
-    
-  } catch(e) {
-    console.error('toggleAnswers error:', e);
-    container.innerHTML = '<div class="hint" style="color:#ef4444">โหลดคำตอบไม่สำเร็จ: ' + escapeHtml(e.message) + '</div>';
-  }
-};
+$('li_pass').addEventListener('keypress', (e) => { if(e.key === 'Enter') $('doLogin').click(); });
+$('su_pass').addEventListener('keypress', (e) => { if(e.key === 'Enter') $('doSignup').click(); });
+$('q').addEventListener('keypress', (e) => { if(e.key === 'Enter') $('doSearch').click(); });
 
 window.addEventListener('load', () => {
   renderAuth();
-  // Auto-load questions on page load
-  $('latest').click();
+  $('latest').click(); // Auto-load on page load
 });
 </script>
 </body>
