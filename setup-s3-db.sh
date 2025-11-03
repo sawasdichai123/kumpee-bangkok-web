@@ -1,44 +1,93 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ===== Config =====
 REGION="${REGION:-us-east-1}"
 PROJECT="${PROJECT:-kumpee-bangkok-s3db}"
-TS="$(date +%s)"
-ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo unknown)"
-RAND="$(openssl rand -hex 4 2>/dev/null || echo r$RANDOM)"
-BUCKET="${PROJECT}-${ACCOUNT_ID}-${RAND}-${TS}"
+APP_STAGE="${APP_STAGE:-dev}"     # ใช้เป็น prefix แยกสภาพแวดล้อม
+FORCE="${FORCE:-0}"               # FORCE=1 เพื่อเขียนทับ/รีเซ็ต
+CWD="$(pwd)"
 
 echo "=== Preflight ==="
-aws sts get-caller-identity >/dev/null 2>&1 || {
+if ! aws sts get-caller-identity >/dev/null 2>&1; then
   echo "❌ AWS credentials ไม่พร้อม (Cloud9 > Preferences > AWS Settings > เปิด 'AWS managed temporary credentials' แล้ว Refresh)"
   exit 1
-}
+fi
 aws configure set region "$REGION"
 
-echo "=== 1) สร้าง S3 bucket (private) สำหรับเก็บ JSON ==="
-aws s3 mb "s3://${BUCKET}" --region "$REGION" >/dev/null || true
-echo "Bucket: ${BUCKET}"
-
-echo "=== 2) ใส่ไฟล์ฐานข้อมูลเริ่มต้น (questions.json / answers.json) ==="
-echo "[]" | aws s3 cp - "s3://${BUCKET}/questions.json" >/dev/null
-echo "[]" | aws s3 cp - "s3://${BUCKET}/answers.json"  >/dev/null
-
-echo "=== 3) เตรียมโค้ด API (Express + S3 JSON) ==="
 mkdir -p api
 
-# server.js (CommonJS)
-cat > api/server.js <<'JS'
+# ===== Reuse BUCKET if exists in api/.env =====
+EXISTING_BUCKET=""
+if [[ -f "api/.env" ]]; then
+  # ดึง BUCKET จากไฟล์ .env (ถ้ามี)
+  EXISTING_BUCKET="$(grep -E '^BUCKET=' api/.env | sed -E 's/^BUCKET=//')"
+fi
+
+if [[ -n "${EXISTING_BUCKET}" && "${FORCE}" != "1" ]]; then
+  BUCKET="${EXISTING_BUCKET}"
+  echo "=== ใช้ BUCKET เดิมจาก api/.env: ${BUCKET}"
+else
+  # สร้างชื่อ BUCKET แบบคงที่ต่อเครื่อง (ถ้าต้องการสุ่ม ให้ตั้ง FORCE=1)
+  ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+  # ใช้ชื่อที่ deterministic มากขึ้น (ไม่ต้องสุ่มทุกครั้ง)
+  BUCKET="${PROJECT}-${ACCOUNT_ID}-${APP_STAGE}"
+  echo "=== เตรียม BUCKET: ${BUCKET}"
+
+  if ! aws s3api head-bucket --bucket "${BUCKET}" 2>/dev/null; then
+    echo "=== 1) สร้าง S3 bucket (private) ==="
+    aws s3 mb "s3://${BUCKET}" --region "$REGION" >/dev/null || true
+  else
+    echo "=== พบ bucket อยู่แล้ว: ${BUCKET}"
+  fi
+fi
+
+# ===== Seed questions/answers เฉพาะตอนยังไม่มี =====
+echo "=== 2) ใส่ไฟล์ฐานข้อมูลเริ่มต้นเฉพาะที่ 'ยังไม่มี' (ไม่ทับ) ==="
+if ! aws s3api head-object --bucket "${BUCKET}" --key "questions.json" >/dev/null 2>&1; then
+  echo "[]" | aws s3 cp - "s3://${BUCKET}/questions.json" >/dev/null
+  echo "  • created questions.json"
+else
+  echo "  • skip questions.json (already exists)"
+fi
+if ! aws s3api head-object --bucket "${BUCKET}" --key "answers.json" >/dev/null 2>&1; then
+  echo "[]" | aws s3 cp - "s3://${BUCKET}/answers.json"  >/dev/null
+  echo "  • created answers.json"
+else
+  echo "  • skip answers.json (already exists)"
+fi
+
+# ===== server.js / package.json: เขียนแบบปลอดภัย =====
+echo "=== 3) เตรียมโค้ด API (Express + S3 JSON) ==="
+write_file_safely () {
+  local target="$1"
+  local marker="$2"
+  local content_file="$3"
+
+  if [[ -f "$target" && "${FORCE}" != "1" ]]; then
+    echo "  • skip ${target} (exists). ใช้ FORCE=1 เพื่อเขียนทับ"
+  else
+    if [[ -f "$target" && "${FORCE}" == "1" ]]; then
+      cp -a "$target" "${target}.bak.$(date +%s)" || true
+      echo "  • backup ${target} -> ${target}.bak.$(date +%s)"
+    fi
+    cat "$content_file" > "$target"
+    echo "  • wrote ${target}"
+  fi
+}
+
+# server.js (โหมด S3 เท่านั้นตามสคริปต์เดิม — ถ้าต้องการ local fallback ให้ใช้ไฟล์เวอร์ชันนั้นแทน)
+TMP_DIR="$(mktemp -d)"
+cat > "${TMP_DIR}/server.js" <<'JS'
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const crypto = require('crypto');
 const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { Readable } = require('stream');
 
 const PORT   = process.env.PORT || 8080;
 const REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
 const BUCKET = process.env.BUCKET;
-
 if (!BUCKET) { console.error('Missing env BUCKET'); process.exit(1); }
 
 const s3 = new S3Client({ region: REGION });
@@ -66,13 +115,13 @@ async function getJson(key){
     const body = await streamToString(out.Body);
     return JSON.parse(body || '[]');
   }catch(e){
-    if (e.name === 'NoSuchKey') return [];
+    if (e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) return [];
     console.error('getJson error', key, e);
     throw e;
   }
 }
 async function putJson(key, data){
-  const body = Buffer.from(JSON.stringify(data));
+  const body = Buffer.from(JSON.stringify(data, null, 0));
   await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: body, ContentType: 'application/json' }));
 }
 function now(){ return new Date().toISOString(); }
@@ -83,7 +132,7 @@ app.get('/questions', async (req,res)=>{
   try{
     const list    = await getJson('questions.json');
     const answers = await getJson('answers.json');
-    const map = answers.reduce((m,a)=> (m[a.questionId]=(m[a.questionId]||0)+1, m), {});
+    const map = answers.reduce((m,a)=>{ const k=a.questionId; if(k) m[k]=(m[k]||0)+1; return m; }, {});
     const out = list.slice().reverse().map(q=>({
       questionId: q.questionId, title: q.title, body: q.body,
       answersCount: map[q.questionId] || 0,
@@ -113,21 +162,50 @@ app.post('/questions/:qid/answers', async (req,res)=>{
     const { body } = req.body||{};
     const author = req.header('X-User') || 'anon';
     if (!qid || !body) return res.status(400).json({error:'bad input'});
+
+    const list = await getJson('questions.json');
+    if (!list.some(q=>q.questionId===qid)) return res.status(404).json({error:'question not found'});
+
     const answers = await getJson('answers.json');
-    answers.push({ answerId: safeId('a'), questionId: qid, body, author, createdAt: now() });
+    const answerId = safeId('a');
+    answers.push({ answerId, questionId: qid, body, author, createdAt: now() });
     await putJson('answers.json', answers);
-    res.json({ answerId: answers[answers.length-1].answerId });
+    res.json({ answerId });
   }catch(e){ console.error(e); res.status(500).json({error:'server'}); }
 });
+
+app.get('/questions/:qid', async (req,res)=>{
+  try{
+    const { qid } = req.params;
+    const list    = await getJson('questions.json');
+    const q = list.find(x => x.questionId === qid);
+    if (!q) return res.status(404).json({error:'not found'});
+    const answers = await getJson('answers.json');
+    const items = answers.filter(a => a.questionId === qid);
+    res.json({ ...q, answers: items });
+  }catch(e){ console.error(e); res.status(500).json({error:'server'}); }
+});
+
+app.get('/answers', async (req,res)=>{
+  try{
+    const all = await getJson('answers.json');
+    const { questionId, qid, question_id } = req.query || {};
+    const want = (questionId || qid || question_id || '').trim();
+    if (!want) return res.json(all);
+    const items = all.filter(a => String(a.questionId||'') === want);
+    res.json(items);
+  }catch(e){ console.error(e); res.status(500).json({error:'server'}); }
+});
+
+app.get('/healthz', (req,res)=> res.json({ ok:true, time: now(), bucket: BUCKET }));
 
 app.listen(PORT, ()=> console.log(`API + Web on http://0.0.0.0:${PORT}  (bucket=${BUCKET})`));
 JS
 
-# package.json (CommonJS, lock Node 18)
-cat > api/package.json <<'JSON'
+cat > "${TMP_DIR}/package.json" <<'JSON'
 {
   "name": "kumpee-bangkok-s3db",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "main": "server.js",
   "scripts": {
@@ -139,12 +217,14 @@ cat > api/package.json <<'JSON'
     "cors": "^2.8.5",
     "express": "^4.21.1"
   },
-  "engines": {
-    "node": "18.x"
-  }
+  "engines": { "node": "18.x" }
 }
 JSON
 
+write_file_safely "api/server.js" "JS" "${TMP_DIR}/server.js"
+write_file_safely "api/package.json" "JSON" "${TMP_DIR}/package.json"
+
+# ===== Node 18 & deps (ไม่ลบ lock ถ้าไม่ FORCE) =====
 echo "=== 4) ติดตั้ง Node 18 และ dependencies ==="
 if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q '^v18'; then
   if ! command -v nvm >/dev/null 2>&1; then
@@ -157,24 +237,42 @@ if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q '^v18'; then
   nvm use 18
 fi
 pushd api >/dev/null
-rm -rf node_modules package-lock.json >/dev/null 2>&1 || true
+if [[ "${FORCE}" == "1" ]]; then
+  rm -rf node_modules >/dev/null 2>&1 || true
+fi
 npm install --silent
 popd >/dev/null
 
-echo "=== 5) สร้าง .env สำหรับ API ==="
-cat > api/.env <<ENV
+# ===== .env (สร้างถ้ายังไม่มี หรือ FORCE=1) =====
+echo "=== 5) สร้าง/อัปเดต .env สำหรับ API ==="
+if [[ ! -f "api/.env" || "${FORCE}" == "1" ]]; then
+  cat > api/.env <<ENV
 BUCKET=${BUCKET}
 PORT=8080
 ENV
+  echo "  • wrote api/.env"
+else
+  echo "  • skip api/.env (exists). ใช้ FORCE=1 เพื่อเขียนทับ"
+fi
 
-echo "=== 6) แพตช์ index.html ให้เรียก API โดเมน/พอร์ตเดียวกัน ==="
-if [ -f index.html ]; then
-  sed -i 's#const api *= *"[^"]*";#const api = window.location.origin;#g' index.html || true
+# ===== แพตช์ index.html เฉพาะตอนมีไฟล์และมี pattern =====
+echo "=== 6) แพตช์ index.html (ถ้ามี) ==="
+if [[ -f "index.html" ]]; then
+  if grep -qE 'const api *= *"[^"]*";' index.html; then
+    sed -i 's#const api *= *"[^"]*";#const api = window.location.origin;#g' index.html || true
+    echo "  • patched index.html"
+  else
+    echo "  • skip (no matching pattern)"
+  fi
+else
+  echo "  • skip (no index.html)"
 fi
 
 echo
 echo "=========== DONE ==========="
 echo "Bucket        : ${BUCKET}"
-echo "รัน API/Web   : cd api && set -a; source .env; set +a; npm start"
-echo "เปิดเว็บ (C9) : Cloud9 > Preview Running Application (port 8080)"
+echo "Stage         : ${APP_STAGE}"
+echo "Run API/Web   : cd api && set -a; source .env; set +a; npm start"
+echo "Cloud9        : Preview Running Application (port 8080)"
+echo "Note          : ใช้ FORCE=1 ถ้าต้องการรีเซ็ต/เขียนทับไฟล์"
 echo "============================"
